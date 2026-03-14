@@ -1248,47 +1248,9 @@ function MaintenanceTracker() {
             <p style={{ fontSize: 10, color: "#71717a", margin: 0, textAlign: "center" }}>
               Select all text in the box, then use Ctrl+C / Cmd+C to copy. To restore, paste and click Import.
             </p>
-            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 4 }}>
-              <button
-                onClick={() => {
-                  // Compact: only history data, deleted list, and custom intervals
-                  const compact = {};
-                  const cats = ["home", "car", "hottub", "yard", "person", "banjo"];
-                  cats.forEach(c => {
-                    const items = (data[c] || []).filter(i => (i.history && i.history.length > 0));
-                    if (items.length > 0) {
-                      compact[c] = items.map(i => ({ id: i.id, h: i.history }));
-                    }
-                  });
-                  if (data._deleted && data._deleted.length > 0) compact._d = data._deleted;
-                  if (data._customIntervals && Object.keys(data._customIntervals).length > 0) compact._ci = data._customIntervals;
-                  if (data._tabNames && Object.keys(data._tabNames).length > 0) compact._tn = data._tabNames;
-                  const el = document.getElementById("export-textarea");
-                  if (el) { el.value = JSON.stringify(compact); el.select(); }
-                }}
-                style={{
-                  padding: "6px 14px", fontSize: 10, border: "1px solid #3f3f46", borderRadius: 4,
-                  cursor: "pointer", background: "transparent", color: "#a1a1aa", fontFamily: "inherit",
-                }}
-              >
-                COMPACT (history only)
-              </button>
-              <button
-                onClick={() => {
-                  const el = document.getElementById("export-textarea");
-                  if (el) { el.value = JSON.stringify(data); el.select(); }
-                }}
-                style={{
-                  padding: "6px 14px", fontSize: 10, border: "1px solid #3f3f46", borderRadius: 4,
-                  cursor: "pointer", background: "transparent", color: "#a1a1aa", fontFamily: "inherit",
-                }}
-              >
-                FULL BACKUP
-              </button>
-            </div>
             <textarea
               id="export-textarea"
-              defaultValue=""
+              defaultValue={JSON.stringify(data)}
               onClick={(e) => e.target.select()}
               style={{
                 width: "100%", height: 120, padding: 10, fontSize: 10,
@@ -1298,58 +1260,17 @@ function MaintenanceTracker() {
                 boxSizing: "border-box",
               }}
             />
-            <p style={{ fontSize: 9, color: "#52525b", margin: 0, textAlign: "center" }}>
-              Tap the text box to select all, then copy manually. Paste backup data here to import.
-            </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
               <button
                 onClick={() => {
                   const el = document.getElementById("export-textarea");
                   if (el) {
-                    const text = el.value.trim();
-                    // Try full backup first
                     try {
-                      const parsed = JSON.parse(text);
+                      const parsed = JSON.parse(el.value.trim());
                       if (parsed.home && parsed.car) {
                         save(parsed);
                         setShowExport(false);
-                        return;
                       }
-                    } catch {}
-                    // Try compact format
-                    try {
-                      const parsed = JSON.parse(text);
-                      const restored = JSON.parse(JSON.stringify(data));
-                      const cats = ["home", "car", "hottub", "yard", "person", "banjo"];
-                      cats.forEach(c => {
-                        if (parsed[c]) {
-                          parsed[c].forEach(({ id, h }) => {
-                            const item = (restored[c] || []).find(i => i.id === id);
-                            if (item && h) {
-                              item.history = h;
-                              const sorted = [...h].sort();
-                              item.lastDone = sorted[sorted.length - 1];
-                            }
-                          });
-                        }
-                      });
-                      if (parsed._d) restored._deleted = parsed._d;
-                      if (parsed._ci) {
-                        restored._customIntervals = parsed._ci;
-                        // Apply custom intervals to actual items
-                        cats.forEach(c => {
-                          (restored[c] || []).forEach(item => {
-                            if (parsed._ci[item.id] !== undefined) {
-                              item.interval = parsed._ci[item.id];
-                            }
-                          });
-                        });
-                      }
-                      if (restored._tabNames || parsed._tn) {
-                        restored._tabNames = parsed._tn || restored._tabNames;
-                      }
-                      save(restored);
-                      setShowExport(false);
                     } catch {}
                   }
                 }}
