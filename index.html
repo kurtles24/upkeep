@@ -356,6 +356,15 @@ const formatInterval = (days) => {
   return `${days} days`;
 };
 
+const DEFAULT_TABS = [
+  { key: "home", name: "Home", icon: "🏠" },
+  { key: "car", name: "Car", icon: "🚗" },
+  { key: "hottub", name: "Hot Tub", icon: "♨️" },
+  { key: "yard", name: "Yard", icon: "🌿" },
+  { key: "person", name: "Kurt", icon: "🧑" },
+  { key: "banjo", name: "Banjo", icon: "🐕" },
+];
+
 const statusColors = {
   overdue: { bg: "#2a0a0a", border: "#b91c1c", text: "#fca5a5", badge: "#dc2626", badgeText: "#fff" },
   soon: { bg: "#1a1506", border: "#ca8a04", text: "#fde68a", badge: "#eab308", badgeText: "#1a1506" },
@@ -386,6 +395,11 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
   const [copySuccess, setCopySuccess] = useState(false);
   const [editingTabName, setEditingTabName] = useState(false);
   const [tabNameValue, setTabNameValue] = useState("");
+  const [showAddTab, setShowAddTab] = useState(false);
+  const [newTabName, setNewTabName] = useState("");
+  const [newTabIcon, setNewTabIcon] = useState("📋");
+  const [confirmDeleteTab, setConfirmDeleteTab] = useState(false);
+  const [editingTabIcon, setEditingTabIcon] = useState(false);
 
   // Load data, merging in any new default items
   useEffect(() => {
@@ -428,16 +442,21 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
           const saved = JSON.parse(result.value);
           const deletedIds = new Set(saved._deleted || []);
           const customIntervals = saved._customIntervals || {};
-          const merged = {
-            home: mergeDefaults(saved.home || [], "home", deletedIds, customIntervals),
-            car: mergeDefaults(saved.car || [], "car", deletedIds, customIntervals),
-            hottub: mergeDefaults(saved.hottub || [], "hottub", deletedIds, customIntervals),
-            yard: mergeDefaults(saved.yard || [], "yard", deletedIds, customIntervals),
-            person: mergeDefaults(saved.person || [], "person", deletedIds, customIntervals),
-            banjo: mergeDefaults(saved.banjo || [], "banjo", deletedIds, customIntervals),
-            _deleted: saved._deleted || [],
-            _customIntervals: customIntervals,
-          };
+          const savedTabs = saved._tabs || DEFAULT_TABS;
+          const merged = { _tabs: savedTabs };
+          // Merge default categories
+          const defaultKeys = Object.keys(DEFAULT_ITEMS);
+          defaultKeys.forEach((key) => {
+            merged[key] = mergeDefaults(saved[key] || [], key, deletedIds, customIntervals);
+          });
+          // Preserve custom tab data
+          savedTabs.forEach((t) => {
+            if (!merged[t.key]) {
+              merged[t.key] = saved[t.key] || [];
+            }
+          });
+          merged._deleted = saved._deleted || [];
+          merged._customIntervals = customIntervals;
           setData(merged);
           if (JSON.stringify(merged) !== result.value) {
             try { await window.storage.set(STORAGE_KEY, JSON.stringify(merged)); } catch {}
@@ -460,6 +479,7 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
       // Only initialize fresh if there was truly no data
       if (!hasExistingData) {
         const init = {
+          _tabs: DEFAULT_TABS,
           home: DEFAULT_ITEMS.home.map((i) => ({ ...i, lastDone: null, history: [] })),
           car: DEFAULT_ITEMS.car.map((i) => ({ ...i, lastDone: null, history: [] })),
           hottub: DEFAULT_ITEMS.hottub.map((i) => ({ ...i, lastDone: null, history: [] })),
@@ -584,6 +604,7 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
 
   const resetAll = async () => {
     const init = {
+      _tabs: DEFAULT_TABS,
       home: DEFAULT_ITEMS.home.map((i) => ({ ...i, lastDone: null, history: [] })),
       car: DEFAULT_ITEMS.car.map((i) => ({ ...i, lastDone: null, history: [] })),
       hottub: DEFAULT_ITEMS.hottub.map((i) => ({ ...i, lastDone: null, history: [] })),
@@ -609,10 +630,14 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
     );
   }
 
-  const categories = ["home", "car", "hottub", "yard", "person", "banjo"];
-  const categoryLabels = { home: "🏠", car: "🚗", hottub: "♨️", yard: "🌿", person: "🧑", banjo: "🐕" };
-  const defaultTabNames = { home: "🏠 Home", car: "🚗 Car", hottub: "♨️ Hot Tub", yard: "🌿 Yard", person: "🧑 Kurt", banjo: "🐕 Banjo" };
-  const getTabName = (tab) => (data._tabNames && data._tabNames[tab]) || defaultTabNames[tab];
+  const tabs = data._tabs || DEFAULT_TABS;
+  const categories = tabs.map((t) => t.key);
+  const categoryLabels = {};
+  tabs.forEach((t) => { categoryLabels[t.key] = t.icon; });
+  const getTabName = (tab) => {
+    const t = tabs.find((x) => x.key === tab);
+    return t ? `${t.icon} ${t.name}` : tab;
+  };
 
   // When a status filter is active, show items from ALL categories matching that status
   const allItems = statusFilter
@@ -674,7 +699,7 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 0, padding: "0 16px", borderBottom: "1px solid #1e1e22", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        {["home", "car", "hottub", "yard", "person", "banjo"].map((tab) => {
+        {categories.map((tab) => {
           const tabItems = data[tab] || [];
           const worstOrder = { overdue: 0, soon: 1, good: 2, unknown: 3 };
           const worstStatus = tabItems.reduce((worst, item) => {
@@ -691,13 +716,13 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
           return (
             <button
               key={tab}
-              onClick={() => { setActiveTab(tab); setStatusFilter(null); setShowAddForm(false); setEditingItem(null); }}
+              onClick={() => { setActiveTab(tab); setStatusFilter(null); setShowAddForm(false); setEditingItem(null); setShowAddTab(false); }}
               style={{
                 padding: "14px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "1.5px",
                 textTransform: "uppercase", border: "none", cursor: "pointer",
-                background: "transparent", fontFamily: "inherit",
-                color: activeTab === tab ? "#e4e4e7" : inactiveColor,
-                borderBottom: activeTab === tab ? `2px solid ${inactiveColor}` : "2px solid transparent",
+                background: "transparent", fontFamily: "inherit", whiteSpace: "nowrap",
+                color: activeTab === tab && !statusFilter ? "#e4e4e7" : inactiveColor,
+                borderBottom: activeTab === tab && !statusFilter ? `2px solid ${inactiveColor}` : "2px solid transparent",
                 transition: "all 0.2s",
               }}
             >
@@ -705,7 +730,99 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
             </button>
           );
         })}
+        <button
+          onClick={() => setShowAddTab(!showAddTab)}
+          style={{
+            padding: "14px 12px", fontSize: 14, border: "none", cursor: "pointer",
+            background: "transparent", color: "#3f3f46", fontFamily: "inherit",
+            borderBottom: "2px solid transparent", whiteSpace: "nowrap",
+          }}
+        >
+          +
+        </button>
       </div>
+
+      {/* Add tab form */}
+      {showAddTab && (
+        <div style={{
+          padding: "12px 24px", borderBottom: "1px solid #1e1e22", background: "#0f0f12",
+          display: "flex", flexDirection: "column", gap: 8,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#a1a1aa" }}>Add New Tab</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {["📋","🏠","🚗","♨️","🌿","🐕","🧑","🐈","🏋️","💻","🎸","🪴","🔧","🎯","📦","🧸","🛒","🏢","✈️","🎮","📱","🩺","🎨","📚","🧹","⚡","🌊","🏔️","🚲","🎵"].map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => setNewTabIcon(emoji)}
+                style={{
+                  width: 32, height: 32, fontSize: 16,
+                  border: newTabIcon === emoji ? "2px solid #e4e4e7" : "1px solid #27272a",
+                  borderRadius: 5, cursor: "pointer",
+                  background: newTabIcon === emoji ? "#27272a" : "#18181b",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={newTabName}
+              onChange={(e) => setNewTabName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newTabName.trim()) {
+                  const key = `custom_${Date.now()}`;
+                  const updated = { ...data };
+                  updated._tabs = [...tabs, { key, name: newTabName.trim(), icon: newTabIcon }];
+                  updated[key] = [];
+                  save(updated);
+                  setNewTabName("");
+                  setNewTabIcon("📋");
+                  setShowAddTab(false);
+                  setActiveTab(key);
+                }
+              }}
+              style={{
+                flex: 1, padding: "8px 12px", fontSize: 12, border: "1px solid #3f3f46",
+                borderRadius: 5, background: "#18181b", color: "#e4e4e7", fontFamily: "inherit",
+              }}
+              placeholder="Tab name"
+            />
+            <button
+              onClick={() => {
+                if (!newTabName.trim()) return;
+                const key = `custom_${Date.now()}`;
+                const updated = { ...data };
+                updated._tabs = [...tabs, { key, name: newTabName.trim(), icon: newTabIcon }];
+                updated[key] = [];
+                save(updated);
+                setNewTabName("");
+                setNewTabIcon("📋");
+                setShowAddTab(false);
+                setActiveTab(key);
+              }}
+              style={{
+                padding: "8px 14px", fontSize: 11, fontWeight: 600, border: "none",
+                borderRadius: 5, cursor: "pointer", background: "#e4e4e7",
+                color: "#09090b", fontFamily: "inherit",
+              }}
+            >
+              ADD
+            </button>
+            <button
+              onClick={() => { setShowAddTab(false); setNewTabName(""); setNewTabIcon("📋"); }}
+              style={{
+                padding: "8px 14px", fontSize: 11, border: "1px solid #3f3f46",
+                borderRadius: 5, cursor: "pointer", background: "transparent",
+                color: "#71717a", fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Summary strip */}
       <div style={{
@@ -1167,71 +1284,156 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
           </button>
         ))}
 
-        {/* Edit Tab Name */}
+        {/* Tab Settings */}
         {!statusFilter && (
-          <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
             {editingTabName ? (
               <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "8px 12px", border: "1px solid #3f3f46",
-                borderRadius: 6, background: "#0f0f12",
+                display: "flex", flexDirection: "column", gap: 8, padding: "12px",
+                border: "1px solid #3f3f46", borderRadius: 6, background: "#0f0f12", width: "100%",
               }}>
-                <input
-                  autoFocus
-                  value={tabNameValue}
-                  onChange={(e) => setTabNameValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && tabNameValue.trim()) {
-                      const updated = { ...data, _tabNames: { ...(data._tabNames || {}), [activeTab]: tabNameValue.trim() } };
-                      save(updated);
-                      setEditingTabName(false);
-                    }
-                    if (e.key === "Escape") setEditingTabName(false);
-                  }}
-                  style={{
-                    padding: "6px 10px", fontSize: 11, border: "1px solid #3f3f46",
-                    borderRadius: 4, background: "#18181b", color: "#e4e4e7",
-                    fontFamily: "inherit", width: 150,
-                  }}
-                  placeholder="Tab name"
-                />
-                <button
-                  onClick={() => {
-                    if (tabNameValue.trim()) {
-                      const updated = { ...data, _tabNames: { ...(data._tabNames || {}), [activeTab]: tabNameValue.trim() } };
-                      save(updated);
-                      setEditingTabName(false);
-                    }
-                  }}
-                  style={{
-                    padding: "6px 10px", fontSize: 10, fontWeight: 600, border: "none",
-                    borderRadius: 4, cursor: "pointer", background: "#e4e4e7",
-                    color: "#09090b", fontFamily: "inherit",
-                  }}
-                >
-                  SAVE
-                </button>
-                <button
-                  onClick={() => setEditingTabName(false)}
-                  style={{
-                    padding: "6px 10px", fontSize: 10, border: "1px solid #3f3f46",
-                    borderRadius: 4, cursor: "pointer", background: "transparent",
-                    color: "#71717a", fontFamily: "inherit",
-                  }}
-                >
-                  Cancel
-                </button>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#a1a1aa" }}>Edit Tab</div>
+                {/* Icon picker */}
+                <div>
+                  <label style={{ fontSize: 10, color: "#71717a", marginBottom: 4, display: "block" }}>Icon</label>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {["🏠","🚗","♨️","🌿","🐕","🧑","🐈","📋","🏋️","💻","🎸","🪴","🔧","🎯","📦","🧸","🛒","🏢","✈️","🎮","📱","🩺","🎨","📚","🧹","⚡","🌊","🏔️","🚲","🎵"].map((emoji) => {
+                      const currentTab = tabs.find((t) => t.key === activeTab);
+                      const currentIcon = editingTabIcon ? (currentTab ? currentTab.icon : "📋") : null;
+                      return (
+                        <button
+                          key={emoji}
+                          onClick={() => {
+                            const updated = { ...data };
+                            updated._tabs = tabs.map((t) => t.key === activeTab ? { ...t, icon: emoji } : t);
+                            save(updated);
+                          }}
+                          style={{
+                            width: 28, height: 28, fontSize: 14,
+                            border: (currentTab && currentTab.icon === emoji) ? "2px solid #e4e4e7" : "1px solid #27272a",
+                            borderRadius: 4, cursor: "pointer",
+                            background: (currentTab && currentTab.icon === emoji) ? "#27272a" : "#18181b",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* Name */}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    autoFocus
+                    value={tabNameValue}
+                    onChange={(e) => setTabNameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && tabNameValue.trim()) {
+                        const updated = { ...data };
+                        updated._tabs = tabs.map((t) => t.key === activeTab ? { ...t, name: tabNameValue.trim() } : t);
+                        save(updated);
+                        setEditingTabName(false);
+                      }
+                      if (e.key === "Escape") setEditingTabName(false);
+                    }}
+                    style={{
+                      flex: 1, padding: "6px 10px", fontSize: 11, border: "1px solid #3f3f46",
+                      borderRadius: 4, background: "#18181b", color: "#e4e4e7", fontFamily: "inherit",
+                    }}
+                    placeholder="Tab name"
+                  />
+                  <button
+                    onClick={() => {
+                      if (tabNameValue.trim()) {
+                        const updated = { ...data };
+                        updated._tabs = tabs.map((t) => t.key === activeTab ? { ...t, name: tabNameValue.trim() } : t);
+                        save(updated);
+                        setEditingTabName(false);
+                      }
+                    }}
+                    style={{
+                      padding: "6px 10px", fontSize: 10, fontWeight: 600, border: "none",
+                      borderRadius: 4, cursor: "pointer", background: "#e4e4e7",
+                      color: "#09090b", fontFamily: "inherit",
+                    }}
+                  >
+                    SAVE
+                  </button>
+                  <button
+                    onClick={() => setEditingTabName(false)}
+                    style={{
+                      padding: "6px 10px", fontSize: 10, border: "1px solid #3f3f46",
+                      borderRadius: 4, cursor: "pointer", background: "transparent",
+                      color: "#71717a", fontFamily: "inherit",
+                    }}
+                  >
+                    Done
+                  </button>
+                </div>
+                {/* Delete tab */}
+                {categories.length > 1 && (
+                  confirmDeleteTab ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                      <span style={{ fontSize: 11, color: "#fca5a5" }}>Delete this tab and all its items?</span>
+                      <button
+                        onClick={() => {
+                          const updated = { ...data };
+                          updated._tabs = tabs.filter((t) => t.key !== activeTab);
+                          delete updated[activeTab];
+                          save(updated);
+                          setActiveTab(updated._tabs[0].key);
+                          setEditingTabName(false);
+                          setConfirmDeleteTab(false);
+                        }}
+                        style={{
+                          padding: "4px 10px", fontSize: 10, fontWeight: 700, border: "none",
+                          borderRadius: 4, cursor: "pointer", background: "#dc2626",
+                          color: "#fff", fontFamily: "inherit",
+                        }}
+                      >
+                        YES
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteTab(false)}
+                        style={{
+                          padding: "4px 10px", fontSize: 10, border: "1px solid #3f3f46",
+                          borderRadius: 4, cursor: "pointer", background: "transparent",
+                          color: "#a1a1aa", fontFamily: "inherit",
+                        }}
+                      >
+                        NO
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDeleteTab(true)}
+                      style={{
+                        padding: "6px 10px", fontSize: 10, border: "1px solid #3f3f4633",
+                        borderRadius: 4, cursor: "pointer", background: "transparent",
+                        color: "#71717a", fontFamily: "inherit", alignSelf: "flex-start",
+                      }}
+                    >
+                      Delete Tab
+                    </button>
+                  )
+                )}
               </div>
             ) : (
               <button
-                onClick={() => { setEditingTabName(true); setTabNameValue(getTabName(activeTab)); }}
+                onClick={() => {
+                  setEditingTabName(true);
+                  const t = tabs.find((x) => x.key === activeTab);
+                  setTabNameValue(t ? t.name : "");
+                  setConfirmDeleteTab(false);
+                }}
                 style={{
                   padding: "8px 16px", fontSize: 10, border: "1px solid #27272a",
                   borderRadius: 5, cursor: "pointer", background: "transparent",
                   color: "#3f3f46", fontFamily: "inherit", letterSpacing: "0.5px",
                 }}
               >
-                ✏️ EDIT TAB NAME
+                ✏️ EDIT TAB
               </button>
             )}
           </div>
