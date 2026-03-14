@@ -29,7 +29,7 @@ window.storage = {
   get: async (key) => {
     if (_cache[key]) return { value: _cache[key] };
     if (!_userId) return null;
-    const { data, error } = await sbClient
+    const { data, error } = await supabase
       .from('user_data')
       .select('data')
       .eq('user_id', _userId)
@@ -48,7 +48,7 @@ window.storage = {
       return { key, value };
     }
     const parsed = JSON.parse(value);
-    const { error } = await sbClient
+    const { error } = await supabase
       .from('user_data')
       .upsert({ user_id: _userId, data: parsed, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     if (error) console.error('Save error:', error);
@@ -379,7 +379,7 @@ const statusLabel = {
   unknown: "NOT SET",
 };
 
-function MaintenanceTracker({ onLogout, userEmail }) {
+function MaintenanceTracker() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("home");
@@ -1262,6 +1262,7 @@ function MaintenanceTracker({ onLogout, userEmail }) {
                   });
                   if (data._deleted && data._deleted.length > 0) compact._d = data._deleted;
                   if (data._customIntervals && Object.keys(data._customIntervals).length > 0) compact._ci = data._customIntervals;
+                  if (data._tabNames && Object.keys(data._tabNames).length > 0) compact._tn = data._tabNames;
                   const el = document.getElementById("export-textarea");
                   if (el) { el.value = JSON.stringify(compact); el.select(); }
                 }}
@@ -1326,13 +1327,27 @@ function MaintenanceTracker({ onLogout, userEmail }) {
                             const item = (restored[c] || []).find(i => i.id === id);
                             if (item && h) {
                               item.history = h;
-                              item.lastDone = [...h].sort()[h.length - 1];
+                              const sorted = [...h].sort();
+                              item.lastDone = sorted[sorted.length - 1];
                             }
                           });
                         }
                       });
                       if (parsed._d) restored._deleted = parsed._d;
-                      if (parsed._ci) restored._customIntervals = parsed._ci;
+                      if (parsed._ci) {
+                        restored._customIntervals = parsed._ci;
+                        // Apply custom intervals to actual items
+                        cats.forEach(c => {
+                          (restored[c] || []).forEach(item => {
+                            if (parsed._ci[item.id] !== undefined) {
+                              item.interval = parsed._ci[item.id];
+                            }
+                          });
+                        });
+                      }
+                      if (restored._tabNames || parsed._tn) {
+                        restored._tabNames = parsed._tn || restored._tabNames;
+                      }
                       save(restored);
                       setShowExport(false);
                     } catch {}
@@ -1379,21 +1394,6 @@ function MaintenanceTracker({ onLogout, userEmail }) {
               }}
             >
               Cancel
-            </button>
-          </div>
-        )}
-        {onLogout && (
-          <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
-            {userEmail && <span style={{ fontSize: 10, color: "#3f3f46" }}>{userEmail}</span>}
-            <button
-              onClick={onLogout}
-              style={{
-                padding: "8px 16px", fontSize: 10, border: "1px solid #27272a",
-                borderRadius: 5, cursor: "pointer", background: "transparent",
-                color: "#3f3f46", fontFamily: "inherit", letterSpacing: "0.5px",
-              }}
-            >
-              SIGN OUT
             </button>
           </div>
         )}
