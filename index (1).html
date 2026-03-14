@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>UPKEEP</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔧</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #09090b; }
+  #root { max-width: 800px; margin: 0 auto; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://mmczbuftjmpomfpvwjjw.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1tY3pidWZ0am1wb21mcHZ3amp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyOTcxNjIsImV4cCI6MjA4ODg3MzE2Mn0.jX8JhbvuIVGJVG5WKebQFSsV12TESufC5CU-ISs5I3k';
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Shim window.storage to use Supabase
+let _userId = null;
+let _cache = {};
+
+window.storage = {
+  setUser: (id) => { _userId = id; },
+  get: async (key) => {
+    if (_cache[key]) return { value: _cache[key] };
+    if (!_userId) return null;
+    const { data, error } = await sbClient
+      .from('user_data')
+      .select('data')
+      .eq('user_id', _userId)
+      .single();
+    if (error || !data) return null;
+    const val = JSON.stringify(data.data);
+    _cache[key] = val;
+    return { value: val };
+  },
+  set: async (key, value) => {
+    _cache[key] = value;
+    if (!_userId) return null;
+    // Backup key goes to localStorage only
+    if (key.endsWith('-backup')) {
+      try { localStorage.setItem(key, value); } catch {}
+      return { key, value };
+    }
+    const parsed = JSON.parse(value);
+    const { error } = await sbClient
+      .from('user_data')
+      .upsert({ user_id: _userId, data: parsed, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    if (error) console.error('Save error:', error);
+    return { key, value };
+  },
+  delete: async (key) => {
+    delete _cache[key];
+    return { key, deleted: true };
+  },
+  list: async () => ({ keys: Object.keys(_cache) }),
+};
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// Auth wrapper component
+function AuthWrapper() {
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [authMode, setAuthMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    sbClient.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) window.storage.setUser(session.user.id);
+      setLoading(false);
+    });
+    const { data: { subscription } } = sbClient.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) window.storage.setUser(session.user.id);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setError('');
+    setMessage('');
+    if (authMode === 'login') {
+      const { error } = await sbClient.auth.signInWithPassword({ email, password });
+      if (error) setError(error.message);
+    } else {
+      const { error } = await sbClient.auth.signUp({ email, password });
+      if (error) setError(error.message);
+      else setMessage('Check your email to confirm your account!');
+    }
+  };
+
+  const handleLogout = async () => {
+    await sbClient.auth.signOut();
+    window.storage.setUser(null);
+    window.location.reload();
+  };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#09090b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: '#71717a', fontSize: 14, fontFamily: "'JetBrains Mono', monospace" }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#09090b', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        <div style={{ width: 320, padding: 24 }}>
+          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+            <svg width="120" height="50" viewBox="0 0 120 50" style={{ overflow: 'visible' }}>
+              <defs>
+                <linearGradient id="loginArcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#22c55e" />
+                  <stop offset="50%" stopColor="#eab308" />
+                  <stop offset="100%" stopColor="#ef4444" />
+                </linearGradient>
+              </defs>
+              <path d="M 15 45 A 45 45 0 0 1 105 45" fill="none" stroke="url(#loginArcGrad)" strokeWidth="5" strokeLinecap="round" />
+              <line x1="60" y1="45" x2="83" y2="14" stroke="#e4e4e7" strokeWidth="1.5" strokeLinecap="round" />
+              <circle cx="60" cy="45" r="2.5" fill="#e4e4e7" />
+            </svg>
+            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '5px', fontFamily: "'DM Sans', sans-serif", color: '#e4e4e7', marginTop: 4 }}>
+              UPKEEP
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 0, marginBottom: 20 }}>
+            {['login', 'signup'].map((mode) => (
+              <button key={mode} onClick={() => { setAuthMode(mode); setError(''); setMessage(''); }}
+                style={{
+                  flex: 1, padding: '10px', fontSize: 11, fontWeight: 600, letterSpacing: '1px',
+                  textTransform: 'uppercase', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  background: authMode === mode ? '#18181b' : 'transparent',
+                  color: authMode === mode ? '#e4e4e7' : '#52525b',
+                  borderBottom: authMode === mode ? '2px solid #e4e4e7' : '2px solid transparent',
+                }}>
+                {mode === 'login' ? 'Sign In' : 'Sign Up'}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email"
+              style={{ padding: '12px 14px', fontSize: 12, border: '1px solid #27272a', borderRadius: 6, background: '#18181b', color: '#e4e4e7', fontFamily: 'inherit', outline: 'none' }} />
+            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password (min 6 characters)"
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAuth(e); }}
+              style={{ padding: '12px 14px', fontSize: 12, border: '1px solid #27272a', borderRadius: 6, background: '#18181b', color: '#e4e4e7', fontFamily: 'inherit', outline: 'none' }} />
+            <button onClick={handleAuth}
+              style={{ padding: '12px', fontSize: 12, fontWeight: 700, border: 'none', borderRadius: 6, cursor: 'pointer', background: '#e4e4e7', color: '#09090b', fontFamily: 'inherit', letterSpacing: '1px' }}>
+              {authMode === 'login' ? 'SIGN IN' : 'CREATE ACCOUNT'}
+            </button>
+          </div>
+
+          {error && <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 6, background: '#2a0a0a', border: '1px solid #b91c1c33', color: '#fca5a5', fontSize: 11 }}>{error}</div>}
+          {message && <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 6, background: '#061a0e', border: '1px solid #15803d33', color: '#86efac', fontSize: 11 }}>{message}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <MaintenanceTracker onLogout={handleLogout} userEmail={session.user.email} />
+    </div>
+  );
+}
+
+
+
+const STORAGE_KEY = "maintenance-tracker-v1";
+
+// Default maintenance items
+const DEFAULT_ITEMS = {
+  home: [
+    { id: "h1", name: "HVAC Filter", interval: 180, icon: "🌬️", criticality: 3, notes: "A clogged filter forces your furnace/AC to work harder, spiking your energy bill and shortening the system's lifespan. Dirty filters also circulate dust, allergens, and pet dander throughout the house. Swap the filter every 90 days (monthly if you have a dog)." },
+    { id: "h2", name: "Smoke Detectors", interval: 180, icon: "🔥", criticality: 5, notes: "Batteries weaken over time and sensors degrade — a detector that doesn't chirp isn't necessarily working. Press the test button monthly and swap batteries every 6 months. Replace the entire unit every 10 years." },
+    { id: "h3", name: "Gutters", interval: 180, icon: "🏠", criticality: 4, notes: "Clogged gutters cause rainwater to overflow and pool against your foundation, leading to basement leaks, soil erosion, and even foundation cracks. In Portland's rainy climate this is especially critical. Clean in spring and fall, and check downspout drainage." },
+    { id: "h4", name: "Water Heater Flush", interval: 365, icon: "🚿", criticality: 3, notes: "Sediment (minerals, sand) settles at the bottom of your tank over time, reducing heating efficiency and eventually corroding the tank from the inside. Draining a few gallons annually flushes this out, extending the unit's life by years and keeping your energy costs down." },
+    { id: "h5", name: "Dryer Vent", interval: 365, icon: "🧺", criticality: 5, notes: "Lint buildup in the vent line (not just the trap) is one of the top causes of house fires — roughly 2,900 dryer fires per year in the US. A clogged vent also makes your dryer run longer and hotter, wasting energy. Disconnect the vent and clean the full line annually." },
+    { id: "h6", name: "Roof Moss Removal", interval: 365, icon: "🌿", criticality: 4, notes: "Portland's wet, shady climate makes roof moss inevitable. Moss holds moisture against shingles, lifting them and accelerating rot — leading to leaks and expensive repairs. Remove moss with a stiff broom or specialized roof scraper (never pressure wash — it destroys shingles). Apply a moss killer (zinc sulfate or iron-based) in fall or early spring. Zinc strips along the ridge line provide ongoing prevention. While you're up there, check for cracked shingles, lifted flashing, and damaged vents." },
+    { id: "h7", name: "Exterior Caulking", interval: 365, icon: "🪟", criticality: 3, notes: "Caulk around windows, doors, and siding joints shrinks and cracks over time, letting moisture seep behind walls where it causes mold, rot, and insulation damage. Re-caulking is cheap and easy — ignoring it leads to expensive envelope repairs. Check all exterior seams once a year." },
+    { id: "h8", name: "Garage Door Maintenance", interval: 365, icon: "🚗", criticality: 3, notes: "Garage doors are the largest moving part in your home. Springs, cables, and rollers wear out and can snap dangerously. Lubricate tracks and hinges with silicone spray, test the auto-reverse safety feature (place a board under the door — it should reverse on contact), and visually inspect springs and cables for wear." },
+    { id: "h9", name: "Crawlspace / Basement Check", interval: 365, icon: "🔦", criticality: 4, notes: "Out of sight, out of mind — but moisture in the crawlspace breeds mold, attracts termites and rodents, and can rot floor joists. Look for standing water, condensation on pipes, pest droppings, damaged vapor barriers, and sagging insulation. Catching issues here early prevents very costly structural repairs." },
+    { id: "h10", name: "Sewer Line Inspection", interval: 1825, icon: "🪠", criticality: 4, notes: "On city sewer, the main concern is tree root intrusion and aging pipe deterioration — not pumping. A camera inspection every 5 years catches roots, cracks, bellied sections, and joint failures before they cause backups. If you have mature trees within 20 feet of the sewer lateral, consider going every 3 years. Signs to act sooner: slow drains in multiple fixtures, gurgling sounds, or sewage smell in the yard." },
+    { id: "h11", name: "Dishwasher Filter", interval: 90, icon: "🍽️", criticality: 1, notes: "Most modern dishwashers have a removable cylindrical filter at the bottom of the tub that traps food particles. If it's never cleaned, dishes come out with a gritty film, the machine develops a foul smell, and food debris can clog the drain pump. Twist it out, rinse under hot water, and scrub with a soft brush every 1–2 months." },
+    { id: "h12", name: "Washing Machine Clean", interval: 60, icon: "👕", criticality: 1, notes: "Moisture trapped in the drum, gasket, and detergent dispenser breeds mold and mildew — causing musty-smelling laundry and potential skin irritation. Front-loaders are especially prone because the door seal traps water. Run a hot cleaning cycle with a machine cleaner or white vinegar monthly, and wipe the door gasket dry after each use." },
+    { id: "h19", name: "Washing Machine Filter", interval: 90, icon: "🧼", criticality: 2, notes: "Most washing machines have a drain pump filter (front-loaders have a small access panel at the bottom front; top-loaders may have it inside the agitator or along the drum rim). It catches coins, hair, lint, and small items that would otherwise clog the drain pump. A blocked filter causes slow draining, foul odors, error codes, and can burn out the pump motor — a $200+ repair. Unscrew/pull it out, clear the debris, rinse under running water, and replace. Keep a towel handy — water will spill out." },
+    { id: "h13", name: "Refrigerator Coils", interval: 365, icon: "🧊", criticality: 2, notes: "Condenser coils (usually on the back or underneath) radiate heat to cool the fridge. When coated in dust and pet hair, the compressor runs longer and hotter — increasing your electric bill and shortening the appliance's life by years. Pull the fridge out, vacuum or brush the coils clean. Takes 10 minutes and can save you a $1,500+ replacement." },
+    { id: "h14", name: "Garbage Disposal", interval: 90, icon: "🗑️", criticality: 1, notes: "Food residue and grease coat the grinding chamber and drain, causing odors and eventually clogs. Grinding ice cubes sharpens the impellers, citrus peels deodorize, and running hot water with dish soap flushes grease. Also check under the sink for leaks at the flange, discharge pipe, and reset button area — slow leaks cause cabinet and subfloor damage." },
+    { id: "h15", name: "Range Hood Filter", interval: 120, icon: "🔥", criticality: 2, notes: "The mesh or baffle filter in your range hood traps airborne grease from cooking. A saturated filter becomes a fire hazard, stops filtering effectively, and lets grease coat your cabinets and ceiling. Most metal filters are dishwasher-safe — soak in hot water with degreaser, scrub, and reinstall. If you cook frequently, check it every 2–3 months." },
+    { id: "h16", name: "Hose Bib Winterization", interval: 365, icon: "🥶", criticality: 4, notes: "Portland's occasional hard freezes can burst outdoor faucet pipes if water is left in the line. A burst pipe inside the wall can cause thousands in water damage before you even notice. Before the first freeze: disconnect all hoses, close the interior shutoff valve (if you have one), and open the outdoor faucet to drain residual water. Insulated covers add extra protection." },
+    { id: "h17", name: "Garage HVAC Filter", interval: 365, icon: "🏗️", criticality: 2, notes: "If your garage has its own HVAC unit or a mini-split, the filter collects dust, sawdust, exhaust particles, and debris that accumulate faster than in your main living space. A clogged filter reduces airflow, strains the system, and can circulate garage contaminants (car exhaust, chemicals) back into the air. Check and replace every 90 days — more often if you do woodworking or other dusty projects in there." },
+    { id: "h18", name: "Chimney Inspection & Sweep", interval: 730, icon: "🧹", criticality: 5, notes: "Creosote — a tar-like byproduct of burning wood — builds up on flue walls and is highly flammable. Just 1/8 inch of buildup is enough to pose a fire risk. Beyond fire hazard, cracked flue liners can leak carbon monoxide into your home, and birds, leaves, or animal nests can block the flue entirely. Have a CSIA-certified sweep inspect annually, even if you rarely use the fireplace — deterioration happens regardless of use." },
+    { id: "h20", name: "Bathroom Exhaust Fan Cleaning", interval: 180, icon: "🌀", criticality: 3, notes: "Dust, lint, and moisture residue clog the fan grille and housing over time, reducing airflow and defeating its purpose — venting humidity out of the bathroom. A fan that can't keep up leads to mold growth on ceilings, walls, and grout, especially in Portland's humid climate. Pop off the cover, vacuum the grille and fan blades, and wipe down the housing. Also a good time to confirm the fan actually vents outside and not just into the attic." },
+    { id: "h21", name: "Clean Shower Head", interval: 180, icon: "🚿", criticality: 1, notes: "Portland's water has moderate mineral content that deposits inside the shower head over time, clogging nozzles and reducing water pressure. You'll notice uneven spray or jets shooting sideways. Unscrew the head and soak it in white vinegar overnight (or tie a bag of vinegar around it if it's fixed). Scrub the nozzles with an old toothbrush, rinse, and reattach. Takes 5 minutes of active work for noticeably better water flow." },
+    { id: "h22", name: "Dust House", interval: 14, icon: "🧹", criticality: 1, notes: "Dust is a mix of dead skin cells, pet dander, pollen, dust mite waste, and fine particulate that accumulates on surfaces, shelves, blinds, baseboards, and ceiling fans. Beyond looking grimy, it degrades indoor air quality and aggravates allergies. With a dog in the house, dust and dander build up faster. Hit high surfaces first (fans, top of shelves) and work down. Don't forget air vents, baseboards, and behind furniture where dust bunnies hide." },
+    { id: "h23", name: "Deep Clean Oven", interval: 180, icon: "🍕", criticality: 1, notes: "Grease and food splatter bake onto the oven interior over time, creating smoke, bad smells, and potentially setting off smoke detectors during cooking. Heavy buildup can also affect temperature accuracy and become a fire risk in extreme cases. Use the self-clean cycle if your oven has one (ventilate well — it gets smoky), or manually scrub with a baking soda paste. Don't forget the racks, door glass (including between the panes), and the bottom heating element area." },
+    { id: "h24", name: "AC Condenser Unit Cleaning", interval: 365, icon: "❄️", criticality: 3, notes: "The outdoor condenser unit pulls air across its fins to dissipate heat. Over the course of a year, dirt, leaves, grass clippings, pollen, and cottonwood fluff clog the fins, forcing the compressor to work harder — raising your energy bill and shortening the unit's lifespan. Clear debris from around the unit (keep 2 feet of clearance), then gently hose the fins from the inside out with a garden hose. Don't use a pressure washer — it bends the delicate fins. Best done in spring before you start running AC for the season." },
+  ],
+  car: [
+    { id: "c1", name: "Oil Change", interval: 180, icon: "🛢️", criticality: 5, notes: "Engine oil lubricates, cools, and cleans internal components. Over time it breaks down, loses viscosity, and accumulates contaminants — starving your engine of protection. Skipping oil changes is the fastest way to destroy an engine. Modern synthetics last 5,000–7,500 miles, but time matters too — change every 4 months even with low mileage." },
+    { id: "c2", name: "Tire Rotation", interval: 365, icon: "🔄", criticality: 2, notes: "Front and rear tires wear at different rates due to steering, weight distribution, and drivetrain. Rotating them every 5,000–7,500 miles evens out wear, extending tire life by thousands of miles and maintaining consistent traction. Uneven wear also signals alignment or suspension issues worth catching early." },
+    { id: "c3", name: "Cabin Air Filter", interval: 545, icon: "💨", criticality: 1, notes: "This filter cleans the air coming through your vents — trapping pollen, dust, exhaust particles, and mold spores. A clogged one reduces airflow (weak AC/heat), produces musty smells, and means you're breathing dirtier air. Easy DIY replacement, usually behind the glove box." },
+    { id: "c4", name: "Engine Air Filter", interval: 730, icon: "⚙️", criticality: 2, notes: "Your engine needs clean air to burn fuel efficiently. A dirty filter restricts airflow, reducing power and fuel economy and potentially allowing contaminants into the combustion chamber. It's one of the cheapest and easiest maintenance items — a new filter every 15,000–30,000 miles keeps performance and MPG where they should be." },
+    { id: "c5", name: "Brake Inspection", interval: 730, icon: "🛑", criticality: 5, notes: "Brake pads wear down gradually — by the time you hear squealing or grinding, you may be damaging the rotors (a much more expensive fix). Annual inspection catches pad wear, rotor thickness, caliper function, and brake fluid condition before they become a safety issue or a bigger bill." },
+    { id: "c6", name: "Battery Replacement", interval: 1460, icon: "🔋", criticality: 4, notes: "Car batteries typically last 3–5 years regardless of mileage — heat, cold, and the natural chemical degradation of lead-acid batteries are the main killers. At 4 years, you're replacing it proactively before you get stranded with a no-start. Low-mileage driving can actually shorten battery life since short trips don't fully recharge it. When replacing, clean the terminal connections and check that the charging system voltage is correct (13.5–14.5V running)." },
+    { id: "c7", name: "Coolant Flush", interval: 1095, icon: "❄️", criticality: 4, notes: "Coolant (antifreeze) prevents your engine from overheating in summer and freezing in winter, and it contains corrosion inhibitors that protect the radiator, water pump, and hoses. Over time these additives break down, and the fluid becomes acidic — corroding the cooling system from within. A flush every 2 years replaces it with fresh protection." },
+    { id: "c8", name: "Transmission Fluid", interval: 1095, icon: "🔧", criticality: 4, notes: "Transmission fluid lubricates gears, cools the transmission, and enables smooth shifting. Degraded fluid causes rough shifts, overheating, and accelerated wear on one of the most expensive components to repair/replace ($3,000–$5,000+). Check fluid level and condition every 2 years; change per your owner's manual schedule." },
+    { id: "c9", name: "Spark Plugs", interval: 2555, icon: "⚡", criticality: 3, notes: "Spark plugs ignite the air/fuel mixture in each cylinder. Worn plugs cause misfires, rough idling, poor acceleration, and reduced fuel economy. Modern iridium/platinum plugs last 60,000–100,000 miles, but checking them around 30,000 miles catches issues early. Replacement is inexpensive relative to the performance impact." },
+    { id: "c11", name: "Wiper Blades", interval: 365, icon: "🌧️", criticality: 2, notes: "UV exposure and constant use degrade the rubber edge, causing streaking, chattering, and blind spots in rain. In the PNW where you're driving through rain 6+ months of the year, good wipers are a safety essential. Replace every 6 months or as soon as you notice streaking. Rear wiper too if you have one — it's easy to forget." },
+    { id: "c12", name: "Tire Pressure Check", interval: 90, icon: "🔵", criticality: 3, notes: "Tire pressure drops about 1 PSI per month naturally, and swings 1 PSI per 10°F of temperature change. Under-inflated tires increase rolling resistance (worse MPG), wear unevenly on the edges, run hotter (blowout risk), and hurt handling. Over-inflated tires wear in the center and reduce grip. Check all four tires plus the spare with a gauge monthly — the TPMS light only triggers when pressure is significantly low." },
+    { id: "c14", name: "Car Wash & Detail", interval: 60, icon: "🧼", criticality: 1, notes: "Road grime, bird droppings, tree sap, and bug splatter damage clear coat and paint if left too long. In winter, road de-icer and salt accelerate undercarriage corrosion — Portland doesn't salt heavily but the surrounding areas do if you're driving to the mountain or coast. A monthly wash with an undercarriage spray protects the body and frame. Wax or sealant every few months adds a protective layer." },
+  ],
+  hottub: [
+    { id: "ht1", name: "Test Water Chemistry", interval: 3, icon: "🧪", criticality: 5, notes: "Test pH (ideal: 7.2–7.8), alkalinity (80–120 ppm), and sanitizer levels (chlorine 1–3 ppm or bromine 3–5 ppm) every few days. Unbalanced water irritates skin and eyes, corrodes equipment, and allows bacteria to thrive. Test strips are quick; a liquid test kit is more accurate. Adjust chemicals in small increments and retest after 30 minutes." },
+    { id: "ht2", name: "Clean / Check Filter", interval: 14, icon: "🔄", criticality: 4, notes: "The filter cartridge traps body oils, lotions, hair, and debris. A dirty filter restricts water flow, strains the pump, and reduces sanitizer effectiveness — meaning the water looks clean but isn't. Rinse with a garden hose every 2 weeks, spraying between each pleat. A deep chemical soak monthly extends filter life significantly." },
+    { id: "ht3", name: "Deep Clean Filter (Chemical Soak)", interval: 30, icon: "🫧", criticality: 3, notes: "Rinsing alone can't remove oils and minerals embedded deep in the filter pleats. A monthly overnight soak in filter cleaning solution dissolves what water pressure can't reach. Rotate between two filters if possible so you always have a clean one ready. Replace filters entirely every 12–18 months regardless of cleaning." },
+    { id: "ht4", name: "Shock Treatment", interval: 7, icon: "⚡", criticality: 4, notes: "Shocking (oxidizing) the water weekly breaks down organic contaminants that regular sanitizer can't handle — body oils, sweat, lotions, and combined chlorine (chloramines) that cause that 'chemical smell.' Use non-chlorine shock for routine maintenance or dichlor shock for heavier contamination. Run jets for 15–20 minutes with the cover open after shocking." },
+    { id: "ht5", name: "Wipe Down Cover", interval: 14, icon: "🧽", criticality: 2, notes: "The underside of the hot tub cover is constantly exposed to warm, humid air — a perfect environment for mold and mildew. Wipe it down with a mild cleaner or diluted vinegar every couple of weeks. Treat the top vinyl surface with a UV protectant spray to prevent cracking and fading from sun exposure. A deteriorating cover loses insulation and drives up energy costs." },
+    { id: "ht6", name: "Check Water Level", interval: 7, icon: "💧", criticality: 5, notes: "Water evaporates faster than you'd expect, especially in cooler weather when the temperature differential is highest. Low water levels can expose the heater element (burning it out — an expensive fix) or cause the pump to suck air (damaging seals and bearings). Check weekly and top off as needed. If you're losing water faster than evaporation explains, check for leaks around jets, unions, and the pump." },
+    { id: "ht7", name: "Drain & Refill", interval: 90, icon: "🚿", criticality: 3, notes: "Over 3–4 months, dissolved solids (body oils, minerals, chemicals) accumulate to levels that no amount of shocking or balancing can fix — the water gets foamy, cloudy, or develops an off smell. Drain completely, clean the shell with a non-abrasive cleaner, flush the plumbing lines with a pipe cleaner product, and refill with fresh water. Rebalance chemistry before using." },
+    { id: "ht8", name: "Inspect Jets & Seals", interval: 90, icon: "🔍", criticality: 3, notes: "Jets can become clogged with calcium deposits or debris, reducing flow and creating dead spots where bacteria can grow. O-rings and gaskets around jets, unions, and the pump degrade over time from heat and chemicals. Look for drips, calcium buildup, and jets that spin weakly or not at all. Replacing an O-ring is $2; ignoring a slow leak can warp the cabinet or damage the foundation underneath." },
+    { id: "ht9", name: "Replace Filter Cartridge", interval: 450, icon: "🆕", criticality: 3, notes: "Even with regular rinsing and soaking, filter media breaks down over time — the pleats lose rigidity, develop micro-tears, and stop trapping fine particles. A worn filter looks clean but performs poorly, putting extra strain on the pump and allowing contaminants through. Replace every 12–18 months depending on usage. Keep the old one as a backup." },
+    { id: "ht10", name: "Cabinet & Equipment Check", interval: 365, icon: "🔧", criticality: 4, notes: "Inspect the exterior cabinet panels for warping, rot, or pest entry points. Check the pump, heater, and control pack for corrosion, leaks, or error codes. Verify the GFCI breaker trips correctly (press the test button). In Portland's wet climate, moisture can seep into the equipment bay — ensure drainage is clear and there's no standing water around electrical components." },
+  ],
+  yard: [
+    { id: "y1", name: "Lawn Mowing", interval: 14, icon: "🌿", criticality: 1, notes: "During the growing season (April–October in Portland), mowing every 1–2 weeks keeps grass healthy. The rule of thumb is never cut more than one-third of the blade height at once — cutting too short stresses the grass, encourages weeds, and exposes soil to sun. Keep mower blades sharp; dull blades tear grass and invite disease." },
+    { id: "y2", name: "Lawn Fertilizing", interval: 90, icon: "🧪", criticality: 1, notes: "Grass needs nutrients to stay thick and crowd out weeds. In the PNW, a spring feeding (April), early summer (June), and fall (September) schedule works well. Fall is actually the most important application — it strengthens roots before winter dormancy. Use a slow-release fertilizer to avoid burning the lawn." },
+    { id: "y3", name: "Lawn Aeration", interval: 365, icon: "🕳️", criticality: 1, notes: "Foot traffic and rain compact soil over time, choking off air, water, and nutrients to grass roots. Core aeration — pulling small plugs of soil — breaks up compaction and lets the lawn breathe. Best done in early fall in the PNW when grass is actively growing and can recover quickly. Overseed afterward for best results." },
+    { id: "y4", name: "Moss Treatment", interval: 365, icon: "🌱", criticality: 2, notes: "Portland's wet, shady climate is paradise for lawn moss. Moss doesn't kill grass — it fills in where grass is already struggling (compacted soil, too much shade, low pH). Apply iron-based moss killer in late winter/early spring, rake out dead moss, then address the underlying issue: aerate, overseed, lime if soil is acidic, and improve drainage." },
+    { id: "y5", name: "Tree & Shrub Pruning", interval: 365, icon: "🌳", criticality: 3, notes: "Pruning removes dead, damaged, or crossing branches, improving structure and airflow (which reduces disease). It also keeps limbs away from the house, roof, and power lines. Most deciduous trees are best pruned in late winter while dormant. Fruit trees need annual pruning to produce well. Avoid pruning in fall — fresh cuts heal slowly and invite fungal infection in wet weather." },
+    { id: "y6", name: "Irrigation System Check", interval: 365, icon: "💦", criticality: 2, notes: "If you have sprinklers or drip irrigation, turn the system on zone by zone each spring and walk the yard. Look for broken heads, clogged emitters, leaking pipes, and misaligned spray patterns. A single broken head can waste thousands of gallons over a season. Blow out lines before winter to prevent freeze damage to pipes and valves." },
+    { id: "y7", name: "Garden Bed Mulching", interval: 365, icon: "🪵", criticality: 1, notes: "A 2–3 inch layer of mulch around trees, shrubs, and garden beds suppresses weeds, retains soil moisture, regulates soil temperature, and breaks down into organic matter that feeds the soil. Apply in spring after soil warms up. Keep mulch a few inches away from tree trunks and plant stems — piling it against bark causes rot ('volcano mulching')." },
+    { id: "y8", name: "Fence Inspection", interval: 365, icon: "🪧", criticality: 2, notes: "Portland's wet winters are hard on wood fences. Check posts for rot at the base (push on them — they shouldn't wobble), look for loose or warped boards, and inspect any hardware. Catching a rotting post early means replacing one post instead of a whole section that falls over in a windstorm. Re-stain or seal every 2–3 years to slow weathering." },
+    { id: "y9", name: "Deck / Patio Maintenance", interval: 365, icon: "🪑", criticality: 3, notes: "Wood decks in the PNW take a beating from rain, moss, and UV. Inspect for soft/spongy boards (sign of rot), popped nails or screws, wobbly railings, and ledger board attachment. Power wash annually to remove moss and grime, then re-seal or stain every 2–3 years. Composite decking still needs cleaning — mold and algae grow on it just like wood in our climate." },
+    { id: "y10", name: "Driveway & Walkway Check", interval: 365, icon: "🛤️", criticality: 2, notes: "Cracks in concrete or asphalt let water seep in; when it freezes and expands, small cracks become big ones fast. Moss and algae also make walkways slippery and dangerous. Seal small cracks before they spread, power wash to remove moss growth, and check for trip hazards from settled or heaved sections. Much cheaper to patch than to repour." },
+    { id: "y11", name: "Weed Control", interval: 60, icon: "🌾", criticality: 1, notes: "Regular weeding every few weeks prevents weeds from going to seed and multiplying exponentially. Pull them when soil is moist (easy in Portland) so you get the roots. Pre-emergent herbicide in early spring stops weed seeds from germinating — but timing matters, apply before soil temps hit 55°F consistently. Mulch is your best passive defense." },
+    { id: "y12", name: "Gutter Downspout Drainage", interval: 180, icon: "⬇️", criticality: 4, notes: "Downspouts that dump water right next to the foundation are a major cause of basement moisture and foundation issues. Extensions or splash blocks should direct water at least 4–6 feet away from the house. Check twice a year that extensions are in place, underground drain lines aren't clogged, and water is actually flowing away from the foundation during a rainstorm." },
+  ],
+  person: [
+    { id: "p1", name: "Haircut", interval: 42, icon: "💇", criticality: 1, notes: "Most men's cuts start looking shaggy around the 4–6 week mark depending on how fast your hair grows and the style. Scheduling a standing appointment every 6 weeks keeps you from that 'I should've gone two weeks ago' phase." },
+    { id: "p2", name: "Fingernail Trim", interval: 14, icon: "✂️", criticality: 1, notes: "Fingernails grow about 3–4mm per month. Trimming every 10 days or so keeps them from snagging, accumulating bacteria underneath, or looking unkempt. Cut straight across with a slight curve at the edges, and don't cut too close to the nail bed." },
+    { id: "p3", name: "Toenail Trim", interval: 21, icon: "🦶", criticality: 1, notes: "Toenails grow slower than fingernails — roughly 1.5mm per month. Trim every 3 weeks or so, cutting straight across (not curved) to prevent ingrown toenails. Letting them go too long can cause discomfort in shoes and increase the risk of fungal issues." },
+    { id: "p4", name: "Dentist Cleaning", interval: 180, icon: "🦷", criticality: 4, notes: "Even with good brushing and flossing, tartar builds up in spots you can't reach. Professional cleanings every 6 months remove it before it leads to gum disease, cavities, or worse. Gum disease is linked to heart disease, diabetes, and other systemic health problems — it's not just about your teeth." },
+    { id: "p5", name: "Eye Exam", interval: 365, icon: "👁️", criticality: 3, notes: "Vision changes gradually enough that you don't always notice. Annual exams catch prescription changes, but also screen for glaucoma, macular degeneration, and other conditions that are treatable if caught early but can cause permanent damage if missed. If you spend a lot of time on screens, also worth discussing digital eye strain." },
+    { id: "p6", name: "Physical / Annual Checkup", interval: 365, icon: "🩺", criticality: 5, notes: "A yearly physical establishes baseline numbers for blood pressure, cholesterol, blood sugar, and other markers so your doctor can spot trends before they become problems. It's also the time to discuss any nagging concerns, update vaccinations, and get age-appropriate screenings. Prevention is dramatically cheaper and easier than treatment." },
+    { id: "p7", name: "Dermatologist Skin Check", interval: 365, icon: "🔬", criticality: 4, notes: "A full-body skin exam screens for melanoma and other skin cancers, which are highly treatable when caught early but can be deadly if missed. The Pacific Northwest's cloudy skies don't protect you — UV penetrates clouds and cumulative exposure adds up. Anyone with moles, fair skin, or a history of sunburns should go annually." },
+    { id: "p8", name: "Flu Shot", interval: 365, icon: "💉", criticality: 3, notes: "Updated annually to match circulating strains. Best to get it in September or October before flu season peaks. Even in years when the match isn't perfect, vaccination reduces severity and duration. It also protects people around you who may be more vulnerable." },
+    { id: "p9", name: "Replace Toothbrush", interval: 90, icon: "🪥", criticality: 1, notes: "Bristles fray and lose effectiveness after about 3 months of use, meaning you're scrubbing but not actually cleaning well. Frayed bristles can also irritate gums. Also replace after any illness. If you use an electric toothbrush, the same 3-month rule applies to the brush head." },
+  ],
+  banjo: [
+    { id: "b1", name: "Vet Checkup", interval: 365, icon: "🐕", criticality: 5, notes: "Annual wellness exams catch issues like dental disease, weight changes, joint problems, and early signs of conditions common to your dog's breed. Includes updating vaccinations (rabies, distemper, bordetella) and heartworm/flea/tick prevention. Dogs age faster than we do — a year between visits is roughly equivalent to 5–7 human years of change." },
+    { id: "b2", name: "Nail Trim", interval: 30, icon: "🐾", criticality: 3, notes: "Overgrown nails change how your dog's paw contacts the ground, leading to joint pain, splayed toes, and difficulty walking — especially on hard floors. If you can hear clicking on tile or hardwood, they're overdue. Trim monthly or have a groomer do it. Keep styptic powder handy in case you nick the quick." },
+    { id: "b3", name: "Flea & Tick Prevention", interval: 30, icon: "🛡️", criticality: 5, notes: "Monthly topical or oral preventatives keep fleas and ticks at bay. Portland's mild, wet climate means fleas can be active year-round — don't skip winter months. Ticks carry Lyme disease and other nasty infections. Consistency is key; a gap in coverage is all it takes for an infestation to start." },
+    { id: "b4", name: "Heartworm Prevention", interval: 30, icon: "💊", criticality: 5, notes: "Heartworm is transmitted by mosquitoes and is potentially fatal if untreated. Monthly preventatives (like Heartgard or Interceptor) kill larvae before they mature. Treatment for an active infection is expensive ($1,000+), painful, and requires months of exercise restriction. Year-round prevention is the standard recommendation even in the PNW." },
+    { id: "b5", name: "Bath & Grooming", interval: 30, icon: "🛁", criticality: 2, notes: "Regular bathing removes dirt, allergens, and excess oils that can irritate skin. Over-bathing strips natural oils though, so every 4–6 weeks is usually right for most breeds. Check ears for redness or odor (infection signs), brush teeth or use dental chews, and brush the coat to reduce shedding and catch mats early." },
+    { id: "b6", name: "Dental Care", interval: 365, icon: "🦷", criticality: 4, notes: "Dental disease is one of the most common health problems in dogs — by age 3, most dogs have some degree of periodontal disease. Bacteria from infected gums can spread to the heart, kidneys, and liver. Annual professional cleanings under anesthesia are ideal, supplemented by regular brushing or dental chews at home." },
+    { id: "b7", name: "Wash Bedding & Toys", interval: 30, icon: "🧸", criticality: 1, notes: "Dog beds, blankets, and plush toys collect dirt, drool, dander, and bacteria. Regular washing prevents skin irritation, odor buildup, and flea egg accumulation. Most dog beds have removable covers that are machine washable. Rubber toys can go in the dishwasher. Every couple of weeks keeps things fresh." },
+  ],
+};
+
+const getDaysUntilDue = (lastDone, interval) => {
+  if (!lastDone) return -9999;
+  const last = new Date(lastDone + "T00:00:00");
+  const due = new Date(last.getTime() + interval * 24 * 60 * 60 * 1000);
+  const now = new Date();
+  return Math.ceil((due - now) / (1000 * 60 * 60 * 24));
+};
+
+const getStatus = (daysLeft) => {
+  if (daysLeft === -9999) return "unknown";
+  if (daysLeft < 0) return "overdue";
+  if (daysLeft <= 14) return "soon";
+  return "good";
+};
+
+const criticalityLabels = ["", "Low", "Moderate", "Important", "High", "Critical"];
+
+const getCriticalityColor = (level) => {
+  const colors = ["", "#22c55e", "#84cc16", "#eab308", "#f97316", "#ef4444"];
+  return colors[level] || "#52525b";
+};
+
+const CriticalityDial = ({ level, size = 44 }) => {
+  const cx = size / 2;
+  const cy = size / 2 + 2;
+  const strokeWidth = 4;
+  const r = (size - strokeWidth - 4) / 2;
+
+  // Map level 1-5 to angle: 180° (left, green) to 0° (right, red)
+  const needleAngleDeg = 180 - ((level - 1) / 4) * 180;
+  const needleAngleRad = (needleAngleDeg * Math.PI) / 180;
+
+  // Background arc: full semi-circle from left (180°) to right (0°)
+  const bgPath = `M ${cx - r} ${cy} A ${r} ${r} 0 1 1 ${cx + r} ${cy}`;
+
+  // Filled arc: from left (180°) to needle position
+  const endX = cx + r * Math.cos(needleAngleRad);
+  const endY = cy - r * Math.sin(needleAngleRad);
+  const sweepDeg = 180 - needleAngleDeg;
+  const largeArc = sweepDeg > 180 ? 1 : 0;
+  const fillPath = level > 1
+    ? `M ${cx - r} ${cy} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY}`
+    : "";
+
+  // Needle endpoint
+  const needleLen = r - 4;
+  const nx = cx + needleLen * Math.cos(needleAngleRad);
+  const ny = cy - needleLen * Math.sin(needleAngleRad);
+
+  const color = getCriticalityColor(level);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+      <svg width={size} height={size / 2 + 8} viewBox={`0 0 ${size} ${size / 2 + 8}`}>
+        <path d={bgPath} fill="none" stroke="#27272a" strokeWidth={strokeWidth} strokeLinecap="round" />
+        {fillPath && (
+          <path d={fillPath} fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+        )}
+        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth={1.5} strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r={2} fill={color} />
+      </svg>
+      <span style={{ fontSize: 8, fontWeight: 600, color, letterSpacing: "0.5px", marginTop: -2 }}>
+        {criticalityLabels[level]}
+      </span>
+    </div>
+  );
+};
+
+const formatDate = (d) => {
+  if (!d) return "Never";
+  // Append T00:00:00 to force local timezone parsing (avoids UTC midnight rolling back a day)
+  const date = new Date(d + "T00:00:00");
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+
+const formatInterval = (days) => {
+  if (days >= 365) {
+    const years = Math.round(days / 365 * 10) / 10;
+    return years === 1 ? "1 year" : `${years % 1 === 0 ? years.toFixed(0) : years} years`;
+  }
+  if (days >= 60) {
+    const months = Math.round(days / 30);
+    return months === 1 ? "1 month" : `${months} months`;
+  }
+  return `${days} days`;
+};
+
+const statusColors = {
+  overdue: { bg: "#2a0a0a", border: "#b91c1c", text: "#fca5a5", badge: "#dc2626", badgeText: "#fff" },
+  soon: { bg: "#1a1506", border: "#ca8a04", text: "#fde68a", badge: "#eab308", badgeText: "#1a1506" },
+  good: { bg: "#061a0e", border: "#15803d", text: "#86efac", badge: "#16a34a", badgeText: "#fff" },
+  unknown: { bg: "#18181b", border: "#3f3f46", text: "#a1a1aa", badge: "#52525b", badgeText: "#e4e4e7" },
+};
+
+const statusLabel = {
+  overdue: "OVERDUE",
+  soon: "DUE SOON",
+  good: "ON TRACK",
+  unknown: "NOT SET",
+};
+
+function MaintenanceTracker({ onLogout, userEmail }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("home");
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [editingItem, setEditingItem] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newItem, setNewItem] = useState({ name: "", interval: 90, icon: "🔧", notes: "" });
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editingInterval, setEditingInterval] = useState(null);
+  const [intervalValue, setIntervalValue] = useState("");
+  const [showExport, setShowExport] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [editingTabName, setEditingTabName] = useState(false);
+  const [tabNameValue, setTabNameValue] = useState("");
+
+  // Load data, merging in any new default items
+  useEffect(() => {
+    // Items that were moved to a different category and should be auto-removed
+    const relocatedItems = { person: new Set(["p10", "p11"]), car: new Set(["c13", "c10"]) };
+
+    const mergeDefaults = (saved, category, deletedIds, customIntervals) => {
+      const defaultMap = new Map(DEFAULT_ITEMS[category].map((d) => [d.id, d]));
+      const removals = relocatedItems[category] || new Set();
+      // Remove relocated items, then sync default fields into existing items
+      const patched = saved
+        .filter((item) => !removals.has(item.id))
+        .map((item) => {
+          const def = defaultMap.get(item.id);
+          if (def) {
+            return {
+              ...item,
+              name: def.name,
+              interval: customIntervals[item.id] !== undefined ? customIntervals[item.id] : def.interval,
+              criticality: def.criticality,
+              notes: def.notes,
+              icon: def.icon,
+            };
+          }
+          return item;
+        });
+      const existingIds = new Set(patched.map((i) => i.id));
+      const newDefaults = DEFAULT_ITEMS[category]
+        .filter((d) => !existingIds.has(d.id) && !deletedIds.has(d.id))
+        .map((d) => ({ ...d, lastDone: null, history: [] }));
+      return [...patched, ...newDefaults];
+    };
+
+    const load = async () => {
+      let hasExistingData = false;
+      try {
+        const result = await window.storage.get(STORAGE_KEY);
+        if (result && result.value) {
+          hasExistingData = true;
+          const saved = JSON.parse(result.value);
+          const deletedIds = new Set(saved._deleted || []);
+          const customIntervals = saved._customIntervals || {};
+          const merged = {
+            home: mergeDefaults(saved.home || [], "home", deletedIds, customIntervals),
+            car: mergeDefaults(saved.car || [], "car", deletedIds, customIntervals),
+            hottub: mergeDefaults(saved.hottub || [], "hottub", deletedIds, customIntervals),
+            yard: mergeDefaults(saved.yard || [], "yard", deletedIds, customIntervals),
+            person: mergeDefaults(saved.person || [], "person", deletedIds, customIntervals),
+            banjo: mergeDefaults(saved.banjo || [], "banjo", deletedIds, customIntervals),
+            _deleted: saved._deleted || [],
+            _customIntervals: customIntervals,
+          };
+          setData(merged);
+          if (JSON.stringify(merged) !== result.value) {
+            try { await window.storage.set(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+          }
+        }
+      } catch (err) {
+        console.error("Error loading data:", err);
+        // If we had existing data but merge failed, don't overwrite — just use raw saved data
+        if (hasExistingData) {
+          try {
+            const result = await window.storage.get(STORAGE_KEY);
+            if (result && result.value) {
+              setData(JSON.parse(result.value));
+              setLoading(false);
+              return;
+            }
+          } catch {}
+        }
+      }
+      // Only initialize fresh if there was truly no data
+      if (!hasExistingData) {
+        const init = {
+          home: DEFAULT_ITEMS.home.map((i) => ({ ...i, lastDone: null, history: [] })),
+          car: DEFAULT_ITEMS.car.map((i) => ({ ...i, lastDone: null, history: [] })),
+          hottub: DEFAULT_ITEMS.hottub.map((i) => ({ ...i, lastDone: null, history: [] })),
+          yard: DEFAULT_ITEMS.yard.map((i) => ({ ...i, lastDone: null, history: [] })),
+          person: DEFAULT_ITEMS.person.map((i) => ({ ...i, lastDone: null, history: [] })),
+          banjo: DEFAULT_ITEMS.banjo.map((i) => ({ ...i, lastDone: null, history: [] })),
+          _deleted: [],
+          _customIntervals: {},
+        };
+        setData(init);
+        try { await window.storage.set(STORAGE_KEY, JSON.stringify(init)); } catch {}
+      }
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const save = useCallback(async (newData) => {
+    setData(newData);
+    try {
+      // Save a backup before writing new data
+      const current = await window.storage.get(STORAGE_KEY);
+      if (current && current.value) {
+        await window.storage.set(STORAGE_KEY + "-backup", current.value);
+      }
+      await window.storage.set(STORAGE_KEY, JSON.stringify(newData));
+    } catch {}
+  }, []);
+
+  const exportData = async () => {
+    const json = JSON.stringify(data, null, 2);
+    try {
+      await navigator.clipboard.writeText(json);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch {
+      // Fallback: show the data in the export panel
+      setShowExport(true);
+    }
+  };
+
+  const importFromText = (text) => {
+    try {
+      const imported = JSON.parse(text);
+      if (imported.home && imported.car) {
+        save(imported);
+        setShowExport(false);
+      }
+    } catch {}
+  };
+
+  const restoreBackup = async () => {
+    try {
+      const backup = await window.storage.get(STORAGE_KEY + "-backup");
+      if (backup && backup.value) {
+        const restored = JSON.parse(backup.value);
+        await save(restored);
+      }
+    } catch {}
+  };
+
+  const markDone = (category, itemId, date) => {
+    const now = new Date();
+    const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const d = date || localToday;
+    const updated = { ...data };
+    updated[category] = updated[category].map((item) => {
+      if (item.id !== itemId) return item;
+      const existing = item.history || [];
+      if (existing.includes(d)) return item; // prevent duplicate dates
+      const history = [...existing, d].sort();
+      return { ...item, lastDone: history[history.length - 1], history };
+    });
+    save(updated);
+    setEditingItem(null);
+  };
+
+  const removeHistoryDate = (category, itemId, date) => {
+    const updated = { ...data };
+    updated[category] = updated[category].map((item) => {
+      if (item.id !== itemId) return item;
+      const history = (item.history || []).filter((d) => d !== date);
+      const lastDone = history.length > 0 ? history.sort()[history.length - 1] : null;
+      return { ...item, lastDone, history };
+    });
+    save(updated);
+  };
+
+  const deleteItem = (category, itemId) => {
+    const updated = { ...data };
+    updated[category] = updated[category].filter((i) => i.id !== itemId);
+    // Track deleted default items so merge doesn't re-add them
+    updated._deleted = [...(updated._deleted || []), itemId];
+    save(updated);
+  };
+
+  const updateInterval = (category, itemId, newInterval) => {
+    const days = parseInt(newInterval);
+    if (!days || days < 1) return;
+    const updated = { ...data };
+    updated[category] = updated[category].map((item) =>
+      item.id === itemId ? { ...item, interval: days } : item
+    );
+    // Track custom intervals so merge doesn't overwrite them
+    updated._customIntervals = { ...(updated._customIntervals || {}), [itemId]: days };
+    save(updated);
+    setEditingInterval(null);
+  };
+
+  const addItem = (category) => {
+    if (!newItem.name.trim()) return;
+    const updated = { ...data };
+    const id = `${category[0]}${Date.now()}`;
+    updated[category] = [
+      ...updated[category],
+      { ...newItem, id, lastDone: null, history: [] },
+    ];
+    save(updated);
+    setNewItem({ name: "", interval: 90, icon: "🔧", notes: "" });
+    setShowAddForm(false);
+  };
+
+  const resetAll = async () => {
+    const init = {
+      home: DEFAULT_ITEMS.home.map((i) => ({ ...i, lastDone: null, history: [] })),
+      car: DEFAULT_ITEMS.car.map((i) => ({ ...i, lastDone: null, history: [] })),
+      hottub: DEFAULT_ITEMS.hottub.map((i) => ({ ...i, lastDone: null, history: [] })),
+      yard: DEFAULT_ITEMS.yard.map((i) => ({ ...i, lastDone: null, history: [] })),
+      person: DEFAULT_ITEMS.person.map((i) => ({ ...i, lastDone: null, history: [] })),
+      banjo: DEFAULT_ITEMS.banjo.map((i) => ({ ...i, lastDone: null, history: [] })),
+      _deleted: [],
+      _customIntervals: {},
+    };
+    await save(init);
+    setConfirmReset(false);
+  };
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: "#09090b", display: "flex",
+        alignItems: "center", justifyContent: "center", fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <div style={{ color: "#71717a", fontSize: 14 }}>Loading...</div>
+      </div>
+    );
+  }
+
+  const categories = ["home", "car", "hottub", "yard", "person", "banjo"];
+  const categoryLabels = { home: "🏠", car: "🚗", hottub: "♨️", yard: "🌿", person: "🧑", banjo: "🐕" };
+  const defaultTabNames = { home: "🏠 Home", car: "🚗 Car", hottub: "♨️ Hot Tub", yard: "🌿 Yard", person: "🧑 Kurt", banjo: "🐕 Banjo" };
+  const getTabName = (tab) => (data._tabNames && data._tabNames[tab]) || defaultTabNames[tab];
+
+  // When a status filter is active, show items from ALL categories matching that status
+  const allItems = statusFilter
+    ? categories.flatMap((c) => (data[c] || []).map((item) => ({ ...item, _category: c })))
+        .filter((item) => getStatus(getDaysUntilDue(item.lastDone, item.interval)) === statusFilter)
+    : (data[activeTab] || []).map((item) => ({ ...item, _category: activeTab }));
+
+  const sorted = [...allItems].sort((a, b) => {
+    const da = getDaysUntilDue(a.lastDone, a.interval);
+    const db = getDaysUntilDue(b.lastDone, b.interval);
+    const order = { overdue: 0, soon: 1, good: 2, unknown: 3 };
+    const sa = getStatus(da);
+    const sb = getStatus(db);
+    if (order[sa] !== order[sb]) return order[sa] - order[sb];
+    if (da !== db) return da - db;
+    return (b.criticality || 0) - (a.criticality || 0);
+  });
+
+  // Counts are always across all categories for the summary strip
+  const allCategoryItems = categories.flatMap((c) => (data[c] || []));
+  const counts = { overdue: 0, soon: 0, good: 0, unknown: 0 };
+  allCategoryItems.forEach((i) => { counts[getStatus(getDaysUntilDue(i.lastDone, i.interval))]++; });
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#09090b", color: "#e4e4e7",
+      fontFamily: "'JetBrains Mono', monospace", padding: "0 0 80px 0",
+    }}>
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ padding: "16px 24px 4px", borderBottom: "1px solid #1e1e22", background: "#09090b" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0, marginLeft: -24 }}>
+          <div style={{ width: 140, display: "flex", justifyContent: "center" }}>
+            <svg width="120" height="50" viewBox="0 0 120 50" style={{ overflow: "visible" }}>
+              <defs>
+                <linearGradient id="arcGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#22c55e" />
+                  <stop offset="50%" stopColor="#eab308" />
+                  <stop offset="100%" stopColor="#ef4444" />
+                </linearGradient>
+              </defs>
+              <path d="M 15 45 A 45 45 0 0 1 105 45" fill="none" stroke="url(#arcGrad)" strokeWidth="5" strokeLinecap="round" />
+              <line x1="60" y1="45" x2="83" y2="14" stroke="#e4e4e7" strokeWidth="1.5" strokeLinecap="round" />
+              <circle cx="60" cy="45" r="2.5" fill="#e4e4e7" />
+            </svg>
+          </div>
+          <div style={{ width: 140, display: "flex", justifyContent: "center", marginTop: -2, paddingLeft: 5 }}>
+            <span style={{
+              fontSize: 18, fontWeight: 800, letterSpacing: "5px",
+              fontFamily: "'DM Sans', sans-serif",
+              color: "#e4e4e7",
+            }}>
+              UPKEEP
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 0, padding: "0 16px", borderBottom: "1px solid #1e1e22", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        {["home", "car", "hottub", "yard", "person", "banjo"].map((tab) => {
+          const tabItems = data[tab] || [];
+          const worstOrder = { overdue: 0, soon: 1, good: 2, unknown: 3 };
+          const worstStatus = tabItems.reduce((worst, item) => {
+            const s = getStatus(getDaysUntilDue(item.lastDone, item.interval));
+            return worstOrder[s] < worstOrder[worst] ? s : worst;
+          }, "unknown");
+          const tabStatusColors = {
+            overdue: "#ef4444",
+            soon: "#eab308",
+            good: "#22c55e",
+            unknown: "#52525b",
+          };
+          const inactiveColor = tabStatusColors[worstStatus];
+          return (
+            <button
+              key={tab}
+              onClick={() => { setActiveTab(tab); setStatusFilter(null); setShowAddForm(false); setEditingItem(null); }}
+              style={{
+                padding: "14px 16px", fontSize: 11, fontWeight: 600, letterSpacing: "1.5px",
+                textTransform: "uppercase", border: "none", cursor: "pointer",
+                background: "transparent", fontFamily: "inherit",
+                color: activeTab === tab ? "#e4e4e7" : inactiveColor,
+                borderBottom: activeTab === tab ? `2px solid ${inactiveColor}` : "2px solid transparent",
+                transition: "all 0.2s",
+              }}
+            >
+              {getTabName(tab)}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Summary strip */}
+      <div style={{
+        display: "flex", gap: 12, padding: "16px 24px", borderBottom: "1px solid #1e1e22",
+        overflowX: "auto",
+      }}>
+        {[
+          { key: "overdue", label: "Overdue" },
+          { key: "soon", label: "Due Soon" },
+          { key: "good", label: "On Track" },
+          { key: "unknown", label: "Not Set" },
+        ].map(({ key, label }) => {
+          const isActive = statusFilter === key;
+          return (
+            <div
+              key={key}
+              onClick={() => { setStatusFilter(isActive ? null : key); setEditingItem(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "6px 12px",
+                background: statusColors[key].bg,
+                border: isActive ? `2px solid ${statusColors[key].border}` : `1px solid ${statusColors[key].border}33`,
+                borderRadius: 6, whiteSpace: "nowrap", cursor: "pointer",
+                opacity: statusFilter && !isActive ? 0.4 : 1,
+                transition: "all 0.2s",
+              }}
+            >
+              <span style={{
+                width: 20, height: 20, borderRadius: 4, display: "flex", alignItems: "center",
+                justifyContent: "center", fontSize: 11, fontWeight: 700,
+                background: statusColors[key].badge, color: statusColors[key].badgeText,
+              }}>
+                {counts[key]}
+              </span>
+              <span style={{ fontSize: 11, color: statusColors[key].text, fontWeight: 500 }}>{label}</span>
+            </div>
+          );
+        })}
+      </div>
+      {/* Filter label */}
+      {statusFilter && (
+        <div style={{
+          padding: "10px 24px", borderBottom: "1px solid #1e1e22",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <span style={{ fontSize: 11, color: "#a1a1aa", fontWeight: 500 }}>
+            Showing all <span style={{ color: statusColors[statusFilter].text }}>{statusFilter === "soon" ? "due soon" : statusFilter === "good" ? "on track" : statusFilter === "unknown" ? "not set" : "overdue"}</span> items across all categories
+          </span>
+          <button
+            onClick={() => setStatusFilter(null)}
+            style={{
+              padding: "4px 10px", fontSize: 10, border: "1px solid #3f3f46",
+              borderRadius: 4, cursor: "pointer", background: "transparent",
+              color: "#71717a", fontFamily: "inherit",
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Items */}
+      <div style={{ padding: "16px 24px" }}>
+        {sorted.map((item) => {
+          const daysLeft = getDaysUntilDue(item.lastDone, item.interval);
+          const status = getStatus(daysLeft);
+          const sc = statusColors[status];
+          const isEditing = editingItem === item.id;
+
+          return (
+            <div key={item.id} style={{
+              marginBottom: 10, border: `1px solid ${sc.border}44`,
+              borderRadius: 8, background: sc.bg, overflow: "hidden",
+              transition: "all 0.2s",
+            }}>
+              <div
+                onClick={() => setEditingItem(isEditing ? null : item.id)}
+                style={{
+                  padding: "14px 16px", cursor: "pointer", display: "flex",
+                  alignItems: "center", gap: 12,
+                }}
+              >
+                <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                  }}>
+                    <span style={{
+                      fontSize: 13, fontWeight: 600, color: "#e4e4e7",
+                      fontFamily: "'DM Sans', sans-serif",
+                    }}>
+                      {statusFilter && (
+                        <span style={{ marginRight: 6 }}>{categoryLabels[item._category]}</span>
+                      )}
+                      {item.name}
+                    </span>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 3,
+                      background: sc.badge, color: sc.badgeText, letterSpacing: "0.5px",
+                    }}>
+                      {statusLabel[status]}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 3 }}>
+                    {status === "unknown"
+                      ? "No date recorded"
+                      : status === "overdue"
+                        ? `${formatInterval(Math.abs(daysLeft))} overdue`
+                        : `${formatInterval(daysLeft)} remaining`}
+                    <span style={{ margin: "0 6px", color: "#52525b" }}>·</span>
+                    Every {formatInterval(item.interval)}
+                    <span style={{ margin: "0 6px", color: "#52525b" }}>·</span>
+                    Last: {formatDate(item.lastDone)}
+                  </div>
+                </div>
+                {item.criticality && (
+                  <div style={{ flexShrink: 0, marginRight: 4 }}>
+                    <CriticalityDial level={item.criticality} size={44} />
+                  </div>
+                )}
+                <span style={{
+                  fontSize: 14, color: "#52525b", transform: isEditing ? "rotate(180deg)" : "none",
+                  transition: "transform 0.2s",
+                }}>
+                  ▾
+                </span>
+              </div>
+
+              {isEditing && (
+                <div style={{
+                  padding: "0 16px 14px", borderTop: `1px solid ${sc.border}33`,
+                }}>
+                  <p style={{ fontSize: 11, color: "#d4d4d8", margin: "10px 0 6px", lineHeight: 1.5 }}>
+                    {item.notes}
+                  </p>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", margin: "0 0 8px", fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    {editingInterval === item.id ? (
+                      <>
+                        <span>Interval: every</span>
+                        <input
+                          type="number"
+                          autoFocus
+                          value={intervalValue}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setIntervalValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === "Enter") updateInterval(item._category, item.id, intervalValue);
+                            if (e.key === "Escape") setEditingInterval(null);
+                          }}
+                          style={{
+                            width: 60, padding: "3px 6px", fontSize: 11, border: "1px solid #3f3f46",
+                            borderRadius: 4, background: "#18181b", color: "#e4e4e7",
+                            fontFamily: "inherit", textAlign: "center",
+                          }}
+                        />
+                        <span>days</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); updateInterval(item._category, item.id, intervalValue); }}
+                          style={{
+                            padding: "3px 8px", fontSize: 10, fontWeight: 600, border: "none",
+                            borderRadius: 3, cursor: "pointer", background: "#e4e4e7",
+                            color: "#09090b", fontFamily: "inherit",
+                          }}
+                        >
+                          SAVE
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditingInterval(null); }}
+                          style={{
+                            padding: "3px 8px", fontSize: 10, border: "1px solid #3f3f46",
+                            borderRadius: 3, cursor: "pointer", background: "transparent",
+                            color: "#71717a", fontFamily: "inherit",
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span>Interval: every {formatInterval(item.interval)}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setEditingInterval(item.id); setIntervalValue(String(item.interval)); }}
+                          style={{
+                            padding: "2px 6px", fontSize: 9, border: "1px solid #3f3f46",
+                            borderRadius: 3, cursor: "pointer", background: "transparent",
+                            color: "#71717a", fontFamily: "inherit",
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  {item.history && item.history.length > 0 && (
+                    <div style={{ margin: "0 0 12px" }}>
+                      <span style={{ fontSize: 10, color: "#71717a", fontWeight: 500, letterSpacing: "0.5px" }}>
+                        HISTORY
+                      </span>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                        {[...item.history].sort().reverse().map((date) => (
+                          <div key={date} style={{
+                            display: "flex", alignItems: "center", gap: 4,
+                            padding: "3px 8px", background: "#18181b",
+                            border: "1px solid #3f3f46", borderRadius: 4,
+                          }}>
+                            <span style={{ fontSize: 11, color: "#d4d4d8" }}>{formatDate(date)}</span>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeHistoryDate(item._category, item.id, date); }}
+                              style={{
+                                background: "none", border: "none", cursor: "pointer",
+                                color: "#71717a", fontSize: 13, padding: "0 2px",
+                                lineHeight: 1, fontFamily: "inherit",
+                              }}
+                              title="Remove this date"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "stretch" }}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); markDone(item._category, item.id); }}
+                      style={{
+                        padding: "8px 16px", fontSize: 11, fontWeight: 600, border: "none",
+                        borderRadius: 5, cursor: "pointer", background: "#e4e4e7",
+                        color: "#09090b", fontFamily: "inherit", letterSpacing: "0.5px",
+                      }}
+                    >
+                      ✓ DONE TODAY
+                    </button>
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "0 10px", border: "1px solid #3f3f46",
+                      borderRadius: 5, background: "#18181b",
+                    }}>
+                      <label style={{ fontSize: 10, color: "#a1a1aa", whiteSpace: "nowrap", fontWeight: 500 }}>
+                        Or pick date:
+                      </label>
+                      <input
+                        type="date"
+                        id={`date-${item.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === "Enter" && e.target.value) {
+                            markDone(item._category, item.id, e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                        style={{
+                          padding: "8px 4px", fontSize: 11, border: "none",
+                          background: "transparent", color: "#e4e4e7",
+                          fontFamily: "inherit", cursor: "pointer",
+                        }}
+                      />
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const input = document.getElementById(`date-${item.id}`);
+                          if (input && input.value) {
+                            markDone(item._category, item.id, input.value);
+                            input.value = "";
+                          }
+                        }}
+                        style={{
+                          padding: "4px 10px", fontSize: 10, fontWeight: 600, border: "none",
+                          borderRadius: 3, cursor: "pointer", background: "#e4e4e7",
+                          color: "#09090b", fontFamily: "inherit", whiteSpace: "nowrap",
+                        }}
+                      >
+                        SAVE
+                      </button>
+                    </div>
+                    {confirmDelete === item.id ? (
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 8, marginLeft: "auto",
+                        padding: "4px 10px", background: "#1c1012", border: "1px solid #b91c1c44",
+                        borderRadius: 5,
+                      }}>
+                        <span style={{ fontSize: 11, color: "#fca5a5", whiteSpace: "nowrap" }}>Delete this item?</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteItem(item._category, item.id); setConfirmDelete(null); }}
+                          style={{
+                            padding: "4px 10px", fontSize: 10, fontWeight: 700, border: "none",
+                            borderRadius: 4, cursor: "pointer", background: "#dc2626",
+                            color: "#fff", fontFamily: "inherit", letterSpacing: "0.5px",
+                          }}
+                        >
+                          YES
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
+                          style={{
+                            padding: "4px 10px", fontSize: 10, fontWeight: 500, border: "1px solid #3f3f46",
+                            borderRadius: 4, cursor: "pointer", background: "transparent",
+                            color: "#a1a1aa", fontFamily: "inherit",
+                          }}
+                        >
+                          NO
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDelete(item.id); }}
+                        style={{
+                          padding: "8px 12px", fontSize: 11, fontWeight: 500, border: "1px solid #3f3f4633",
+                          borderRadius: 5, cursor: "pointer", background: "transparent",
+                          color: "#71717a", fontFamily: "inherit", marginLeft: "auto",
+                        }}
+                      >
+                        Delete Item
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Status filter empty state */}
+        {statusFilter && sorted.length === 0 && (
+          <div style={{
+            padding: "40px 20px", textAlign: "center",
+          }}>
+            <span style={{ fontSize: 28 }}>✅</span>
+            <p style={{ fontSize: 13, color: "#a1a1aa", marginTop: 12, fontFamily: "'DM Sans', sans-serif" }}>
+              No items with this status — nice!
+            </p>
+          </div>
+        )}
+
+        {/* Add form */}
+        {!statusFilter && (showAddForm ? (
+          <div style={{
+            border: "1px dashed #3f3f46", borderRadius: 8, padding: 16,
+            marginTop: 10, background: "#0f0f12",
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12, color: "#a1a1aa" }}>
+              Add Custom Item
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={newItem.icon}
+                  onChange={(e) => setNewItem({ ...newItem, icon: e.target.value })}
+                  style={{
+                    width: 44, padding: "8px", fontSize: 18, border: "1px solid #3f3f46",
+                    borderRadius: 5, background: "#18181b", color: "#e4e4e7",
+                    textAlign: "center", fontFamily: "inherit",
+                  }}
+                  placeholder="🔧"
+                />
+                <input
+                  value={newItem.name}
+                  onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
+                  style={{
+                    flex: 1, padding: "8px 12px", fontSize: 12, border: "1px solid #3f3f46",
+                    borderRadius: 5, background: "#18181b", color: "#e4e4e7", fontFamily: "inherit",
+                  }}
+                  placeholder="Item name"
+                />
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <label style={{ fontSize: 11, color: "#71717a", whiteSpace: "nowrap" }}>Every</label>
+                <input
+                  type="number"
+                  value={newItem.interval}
+                  onChange={(e) => setNewItem({ ...newItem, interval: parseInt(e.target.value) || 30 })}
+                  style={{
+                    width: 70, padding: "8px", fontSize: 12, border: "1px solid #3f3f46",
+                    borderRadius: 5, background: "#18181b", color: "#e4e4e7",
+                    fontFamily: "inherit", textAlign: "center",
+                  }}
+                />
+                <label style={{ fontSize: 11, color: "#71717a" }}>days</label>
+              </div>
+              <input
+                value={newItem.notes}
+                onChange={(e) => setNewItem({ ...newItem, notes: e.target.value })}
+                style={{
+                  padding: "8px 12px", fontSize: 12, border: "1px solid #3f3f46",
+                  borderRadius: 5, background: "#18181b", color: "#e4e4e7", fontFamily: "inherit",
+                }}
+                placeholder="Notes (optional)"
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => addItem(activeTab)}
+                  style={{
+                    padding: "8px 20px", fontSize: 11, fontWeight: 600, border: "none",
+                    borderRadius: 5, cursor: "pointer", background: "#e4e4e7",
+                    color: "#09090b", fontFamily: "inherit",
+                  }}
+                >
+                  ADD
+                </button>
+                <button
+                  onClick={() => { setShowAddForm(false); setNewItem({ name: "", interval: 90, icon: "🔧", notes: "" }); }}
+                  style={{
+                    padding: "8px 16px", fontSize: 11, border: "1px solid #3f3f46",
+                    borderRadius: 5, cursor: "pointer", background: "transparent",
+                    color: "#71717a", fontFamily: "inherit",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setShowAddForm(true)}
+            style={{
+              width: "100%", padding: "14px", fontSize: 12, fontWeight: 500,
+              border: "1px dashed #3f3f46", borderRadius: 8, cursor: "pointer",
+              background: "transparent", color: "#52525b", fontFamily: "inherit",
+              marginTop: 10, letterSpacing: "0.5px",
+            }}
+          >
+            + ADD CUSTOM ITEM
+          </button>
+        ))}
+
+        {/* Edit Tab Name */}
+        {!statusFilter && (
+          <div style={{ marginTop: 16, display: "flex", justifyContent: "center" }}>
+            {editingTabName ? (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 12px", border: "1px solid #3f3f46",
+                borderRadius: 6, background: "#0f0f12",
+              }}>
+                <input
+                  autoFocus
+                  value={tabNameValue}
+                  onChange={(e) => setTabNameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && tabNameValue.trim()) {
+                      const updated = { ...data, _tabNames: { ...(data._tabNames || {}), [activeTab]: tabNameValue.trim() } };
+                      save(updated);
+                      setEditingTabName(false);
+                    }
+                    if (e.key === "Escape") setEditingTabName(false);
+                  }}
+                  style={{
+                    padding: "6px 10px", fontSize: 11, border: "1px solid #3f3f46",
+                    borderRadius: 4, background: "#18181b", color: "#e4e4e7",
+                    fontFamily: "inherit", width: 150,
+                  }}
+                  placeholder="Tab name"
+                />
+                <button
+                  onClick={() => {
+                    if (tabNameValue.trim()) {
+                      const updated = { ...data, _tabNames: { ...(data._tabNames || {}), [activeTab]: tabNameValue.trim() } };
+                      save(updated);
+                      setEditingTabName(false);
+                    }
+                  }}
+                  style={{
+                    padding: "6px 10px", fontSize: 10, fontWeight: 600, border: "none",
+                    borderRadius: 4, cursor: "pointer", background: "#e4e4e7",
+                    color: "#09090b", fontFamily: "inherit",
+                  }}
+                >
+                  SAVE
+                </button>
+                <button
+                  onClick={() => setEditingTabName(false)}
+                  style={{
+                    padding: "6px 10px", fontSize: 10, border: "1px solid #3f3f46",
+                    borderRadius: 4, cursor: "pointer", background: "transparent",
+                    color: "#71717a", fontFamily: "inherit",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => { setEditingTabName(true); setTabNameValue(getTabName(activeTab)); }}
+                style={{
+                  padding: "8px 16px", fontSize: 10, border: "1px solid #27272a",
+                  borderRadius: 5, cursor: "pointer", background: "transparent",
+                  color: "#3f3f46", fontFamily: "inherit", letterSpacing: "0.5px",
+                }}
+              >
+                ✏️ EDIT TAB NAME
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Footer - Data Management */}
+      <div style={{
+        padding: "20px 24px", borderTop: "1px solid #1e1e22",
+        display: "flex", flexDirection: "column", gap: 12, alignItems: "center",
+      }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+          <button
+            onClick={() => setShowExport(!showExport)}
+            style={{
+              padding: "8px 14px", fontSize: 10, border: "1px solid #27272a",
+              borderRadius: 5, cursor: "pointer", background: "transparent",
+              color: "#71717a", fontFamily: "inherit", letterSpacing: "0.5px",
+            }}
+          >
+            📤 EXPORT / IMPORT
+          </button>
+          <button
+            onClick={restoreBackup}
+            style={{
+              padding: "8px 14px", fontSize: 10, border: "1px solid #27272a",
+              borderRadius: 5, cursor: "pointer", background: "transparent",
+              color: "#71717a", fontFamily: "inherit", letterSpacing: "0.5px",
+            }}
+          >
+            ↩️ RESTORE LAST SAVE
+          </button>
+        </div>
+        {showExport && (
+          <div style={{
+            width: "100%", display: "flex", flexDirection: "column", gap: 8,
+          }}>
+            <p style={{ fontSize: 10, color: "#71717a", margin: 0, textAlign: "center" }}>
+              Select all text in the box, then use Ctrl+C / Cmd+C to copy. To restore, paste and click Import.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 4 }}>
+              <button
+                onClick={() => {
+                  // Compact: only history data, deleted list, and custom intervals
+                  const compact = {};
+                  const cats = ["home", "car", "hottub", "yard", "person", "banjo"];
+                  cats.forEach(c => {
+                    const items = (data[c] || []).filter(i => (i.history && i.history.length > 0));
+                    if (items.length > 0) {
+                      compact[c] = items.map(i => ({ id: i.id, h: i.history }));
+                    }
+                  });
+                  if (data._deleted && data._deleted.length > 0) compact._d = data._deleted;
+                  if (data._customIntervals && Object.keys(data._customIntervals).length > 0) compact._ci = data._customIntervals;
+                  const el = document.getElementById("export-textarea");
+                  if (el) { el.value = JSON.stringify(compact); el.select(); }
+                }}
+                style={{
+                  padding: "6px 14px", fontSize: 10, border: "1px solid #3f3f46", borderRadius: 4,
+                  cursor: "pointer", background: "transparent", color: "#a1a1aa", fontFamily: "inherit",
+                }}
+              >
+                COMPACT (history only)
+              </button>
+              <button
+                onClick={() => {
+                  const el = document.getElementById("export-textarea");
+                  if (el) { el.value = JSON.stringify(data); el.select(); }
+                }}
+                style={{
+                  padding: "6px 14px", fontSize: 10, border: "1px solid #3f3f46", borderRadius: 4,
+                  cursor: "pointer", background: "transparent", color: "#a1a1aa", fontFamily: "inherit",
+                }}
+              >
+                FULL BACKUP
+              </button>
+            </div>
+            <textarea
+              id="export-textarea"
+              defaultValue=""
+              onClick={(e) => e.target.select()}
+              style={{
+                width: "100%", height: 120, padding: 10, fontSize: 10,
+                border: "1px solid #27272a", borderRadius: 5,
+                background: "#18181b", color: "#a1a1aa",
+                fontFamily: "inherit", resize: "vertical",
+                boxSizing: "border-box",
+              }}
+            />
+            <p style={{ fontSize: 9, color: "#52525b", margin: 0, textAlign: "center" }}>
+              Tap the text box to select all, then copy manually. Paste backup data here to import.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                onClick={() => {
+                  const el = document.getElementById("export-textarea");
+                  if (el) {
+                    const text = el.value.trim();
+                    // Try full backup first
+                    try {
+                      const parsed = JSON.parse(text);
+                      if (parsed.home && parsed.car) {
+                        save(parsed);
+                        setShowExport(false);
+                        return;
+                      }
+                    } catch {}
+                    // Try compact format
+                    try {
+                      const parsed = JSON.parse(text);
+                      const restored = JSON.parse(JSON.stringify(data));
+                      const cats = ["home", "car", "hottub", "yard", "person", "banjo"];
+                      cats.forEach(c => {
+                        if (parsed[c]) {
+                          parsed[c].forEach(({ id, h }) => {
+                            const item = (restored[c] || []).find(i => i.id === id);
+                            if (item && h) {
+                              item.history = h;
+                              item.lastDone = [...h].sort()[h.length - 1];
+                            }
+                          });
+                        }
+                      });
+                      if (parsed._d) restored._deleted = parsed._d;
+                      if (parsed._ci) restored._customIntervals = parsed._ci;
+                      save(restored);
+                      setShowExport(false);
+                    } catch {}
+                  }
+                }}
+                style={{
+                  padding: "6px 14px", fontSize: 10, border: "none", borderRadius: 4,
+                  cursor: "pointer", background: "#e4e4e7", color: "#09090b", fontFamily: "inherit",
+                }}
+              >
+                IMPORT FROM ABOVE
+              </button>
+            </div>
+          </div>
+        )}
+        {!confirmReset ? (
+          <button
+            onClick={() => setConfirmReset(true)}
+            style={{
+              padding: "8px 16px", fontSize: 10, border: "1px solid #27272a",
+              borderRadius: 5, cursor: "pointer", background: "transparent",
+              color: "#3f3f46", fontFamily: "inherit", letterSpacing: "0.5px",
+            }}
+          >
+            RESET ALL DATA
+          </button>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "#fca5a5" }}>Are you sure?</span>
+            <button
+              onClick={resetAll}
+              style={{
+                padding: "6px 14px", fontSize: 10, border: "none", borderRadius: 4,
+                cursor: "pointer", background: "#dc2626", color: "#fff", fontFamily: "inherit",
+              }}
+            >
+              YES, RESET
+            </button>
+            <button
+              onClick={() => setConfirmReset(false)}
+              style={{
+                padding: "6px 14px", fontSize: 10, border: "1px solid #3f3f46", borderRadius: 4,
+                cursor: "pointer", background: "transparent", color: "#71717a", fontFamily: "inherit",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {onLogout && (
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+            {userEmail && <span style={{ fontSize: 10, color: "#3f3f46" }}>{userEmail}</span>}
+            <button
+              onClick={onLogout}
+              style={{
+                padding: "8px 16px", fontSize: 10, border: "1px solid #27272a",
+                borderRadius: 5, cursor: "pointer", background: "transparent",
+                color: "#3f3f46", fontFamily: "inherit", letterSpacing: "0.5px",
+              }}
+            >
+              SIGN OUT
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(AuthWrapper));
+</script>
+</body>
+</html>
