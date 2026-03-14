@@ -389,6 +389,7 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
   const [newItem, setNewItem] = useState({ name: "", interval: 90, icon: "🔧", notes: "", criticality: 3 });
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editingItemDetails, setEditingItemDetails] = useState(null);
   const [editingInterval, setEditingInterval] = useState(null);
   const [intervalValue, setIntervalValue] = useState("");
   const [showExport, setShowExport] = useState(false);
@@ -583,10 +584,17 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
     updated[category] = updated[category].map((item) =>
       item.id === itemId ? { ...item, interval: days } : item
     );
-    // Track custom intervals so merge doesn't overwrite them
     updated._customIntervals = { ...(updated._customIntervals || {}), [itemId]: days };
     save(updated);
     setEditingInterval(null);
+  };
+
+  const updateItemDetails = (category, itemId, changes) => {
+    const updated = { ...data };
+    updated[category] = updated[category].map((item) =>
+      item.id === itemId ? { ...item, ...changes } : item
+    );
+    save(updated);
   };
 
   const addItem = (category) => {
@@ -954,9 +962,108 @@ function MaintenanceTracker({ onLogout, userEmail } = {}) {
                 <div style={{
                   padding: "0 16px 14px", borderTop: `1px solid ${sc.border}33`,
                 }}>
-                  <p style={{ fontSize: 11, color: "#d4d4d8", margin: "10px 0 6px", lineHeight: 1.5 }}>
-                    {item.notes}
-                  </p>
+                  {editingItemDetails === item.id ? (
+                    <div style={{ margin: "10px 0", display: "flex", flexDirection: "column", gap: 8 }}>
+                      {/* Icon picker */}
+                      <div>
+                        <label style={{ fontSize: 10, color: "#71717a", fontWeight: 500, marginBottom: 4, display: "block" }}>Icon</label>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {["🔧","🏠","🚗","♨️","🌿","🐕","🧑","🌬️","🔥","🧺","🔨","🪟","🚿","🔦","🪠","🍽️","👕","🧼","🧊","🗑️","🥶","🏗️","🧹","🌀","🍕","❄️","🛢️","🔄","💨","⚙️","🛑","🔋","⚡","🌧️","🔵","🧪","🫧","🧽","💧","🔍","🆕","🌱","🌳","💦","🪵","🪧","🪑","🛤️","🌾","⬇️","💇","✂️","🦶","🦷","👁️","🩺","🔬","💉","🪥","🐾","🛡️","💊","🛁","🧸","📦","🔑","💡","🪜","🧯","🪣","🎯","📋","⏰","🏋️","🧴","💻","📱","🎸","🪴","🐈"].map((emoji) => (
+                            <button
+                              key={emoji}
+                              onClick={(e) => { e.stopPropagation(); updateItemDetails(item._category, item.id, { icon: emoji }); }}
+                              style={{
+                                width: 28, height: 28, fontSize: 14,
+                                border: item.icon === emoji ? "2px solid #e4e4e7" : "1px solid #27272a",
+                                borderRadius: 4, cursor: "pointer",
+                                background: item.icon === emoji ? "#27272a" : "#18181b",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                              }}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {/* Name */}
+                      <div>
+                        <label style={{ fontSize: 10, color: "#71717a", fontWeight: 500, marginBottom: 4, display: "block" }}>Name</label>
+                        <input
+                          defaultValue={item.name}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={(e) => { if (e.target.value.trim()) updateItemDetails(item._category, item.id, { name: e.target.value.trim() }); }}
+                          onKeyDown={(e) => { if (e.key === "Enter" && e.target.value.trim()) { updateItemDetails(item._category, item.id, { name: e.target.value.trim() }); } e.stopPropagation(); }}
+                          style={{
+                            width: "100%", padding: "6px 10px", fontSize: 12, border: "1px solid #3f3f46",
+                            borderRadius: 4, background: "#18181b", color: "#e4e4e7", fontFamily: "inherit",
+                            boxSizing: "border-box",
+                          }}
+                        />
+                      </div>
+                      {/* Criticality */}
+                      <div>
+                        <label style={{ fontSize: 10, color: "#71717a", fontWeight: 500, marginBottom: 4, display: "block" }}>Criticality</label>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          {[1, 2, 3, 4, 5].map((level) => (
+                            <button
+                              key={level}
+                              onClick={(e) => { e.stopPropagation(); updateItemDetails(item._category, item.id, { criticality: level }); }}
+                              style={{
+                                flex: 1, padding: "6px 0", fontSize: 9, fontWeight: 600,
+                                border: item.criticality === level ? `2px solid ${getCriticalityColor(level)}` : "1px solid #27272a",
+                                borderRadius: 4, cursor: "pointer",
+                                background: item.criticality === level ? `${getCriticalityColor(level)}15` : "#18181b",
+                                color: item.criticality === level ? getCriticalityColor(level) : "#71717a",
+                                fontFamily: "inherit", textAlign: "center",
+                              }}
+                            >
+                              {criticalityLabels[level]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {/* Notes */}
+                      <div>
+                        <label style={{ fontSize: 10, color: "#71717a", fontWeight: 500, marginBottom: 4, display: "block" }}>Notes</label>
+                        <textarea
+                          defaultValue={item.notes}
+                          onClick={(e) => e.stopPropagation()}
+                          onBlur={(e) => updateItemDetails(item._category, item.id, { notes: e.target.value })}
+                          style={{
+                            width: "100%", height: 80, padding: "6px 10px", fontSize: 11, border: "1px solid #3f3f46",
+                            borderRadius: 4, background: "#18181b", color: "#e4e4e7", fontFamily: "inherit",
+                            resize: "vertical", boxSizing: "border-box", lineHeight: 1.5,
+                          }}
+                        />
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingItemDetails(null); }}
+                        style={{
+                          padding: "6px 14px", fontSize: 10, fontWeight: 600, border: "none",
+                          borderRadius: 4, cursor: "pointer", background: "#e4e4e7",
+                          color: "#09090b", fontFamily: "inherit", alignSelf: "flex-start",
+                        }}
+                      >
+                        DONE EDITING
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: 11, color: "#d4d4d8", margin: "10px 0 6px", lineHeight: 1.5 }}>
+                        {item.notes}
+                      </p>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditingItemDetails(item.id); }}
+                        style={{
+                          padding: "4px 10px", fontSize: 9, border: "1px solid #3f3f46",
+                          borderRadius: 3, cursor: "pointer", background: "transparent",
+                          color: "#71717a", fontFamily: "inherit", marginBottom: 8,
+                        }}
+                      >
+                        ✏️ Edit Item
+                      </button>
+                    </>
+                  )}
                   <div style={{ fontSize: 11, color: "#a1a1aa", margin: "0 0 8px", fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                     {editingInterval === item.id ? (
                       <>
