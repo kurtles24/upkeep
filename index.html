@@ -379,7 +379,7 @@ const statusLabel = {
   unknown: "NOT SET",
 };
 
-function MaintenanceTracker() {
+function MaintenanceTracker({ onLogout, userEmail }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("home");
@@ -1315,6 +1315,21 @@ function MaintenanceTracker() {
               }}
             >
               Cancel
+            </button>
+          </div>
+        )}
+        {onLogout && (
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+            {userEmail && <span style={{ fontSize: 10, color: "#3f3f46" }}>{userEmail}</span>}
+            <button
+              onClick={onLogout}
+              style={{
+                padding: "8px 16px", fontSize: 10, border: "1px solid #27272a",
+                borderRadius: 5, cursor: "pointer", background: "transparent",
+                color: "#3f3f46", fontFamily: "inherit", letterSpacing: "0.5px",
+              }}
+            >
+              SIGN OUT
             </button>
           </div>
         )}
